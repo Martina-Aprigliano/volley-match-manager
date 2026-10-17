@@ -8,6 +8,9 @@ let activeMatchIdForPresence = null;
 let cachePartiteGlobali = [];
 let mostraSoloArchivio = false;
 
+// Indirizzo fisso della palestra di casa
+const INDIRIZZO_CASA = "Oratorio Don Bosco Carugate, Via Papa Pio XI, 36, 20061 Carugate MI";
+
 document.addEventListener('DOMContentLoaded', () => {
     aggiornaInterfaccia();
     testaConnessioneGiocatrici();
@@ -20,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const avversario = document.getElementById('avversario').value.trim();
             const dataOra = document.getElementById('dataOra').value;
             const luogo = document.getElementById('luogo').value;
+            const indirizzo = document.getElementById('indirizzo').value.trim();
 
             if (!avversario || !dataOra) {
                 alert('Compila tutti i campi!');
@@ -28,10 +32,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
             let error;
             if (id) {
-                const res = await db.from('partite').update({ avversario, data_ora: dataOra, luogo }).eq('id', id);
+                const res = await db.from('partite').update({ avversario, data_ora: dataOra, luogo, indirizzo }).eq('id', id);
                 error = res.error;
             } else {
-                const res = await db.from('partite').insert([{ avversario, data_ora: dataOra, luogo }]);
+                const res = await db.from('partite').insert([{ avversario, data_ora: dataOra, luogo, indirizzo }]);
                 error = res.error;
             }
 
@@ -47,7 +51,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
-// --- GESTIONE TEMA CHIARO / SCURO (LAMPADINA) ---
+// --- GESTIONE AUTOCOMPILAZIONE INDIRIZZO CASA ---
+window.gestisciCambioLuogo = function (luogoSelezionato) {
+    const inputIndirizzo = document.getElementById('indirizzo');
+    if (!inputIndirizzo) return;
+
+    if (luogoSelezionato === 'Casa') {
+        inputIndirizzo.value = INDIRIZZO_CASA;
+    } else {
+        if (inputIndirizzo.value === INDIRIZZO_CASA) {
+            inputIndirizzo.value = '';
+        }
+    }
+};
+
+// --- GESTIONE TEMA CHIARO / SCURO ---
 window.toggleTheme = function () {
     const isDark = document.documentElement.classList.toggle('dark');
     localStorage.setItem('volley_theme', isDark ? 'dark' : 'light');
@@ -73,6 +91,8 @@ window.mostraSezione = function (sezione) {
     const secCalendario = document.getElementById('section-calendario');
     const secRiepilogo = document.getElementById('section-riepilogo');
 
+    rimuoviFiltriArchivio(); // Pulisce i filtri dell'archivio se si cambia sezione
+
     if (sezione === 'calendario') {
         mostraSoloArchivio = false;
         const headerTitle = document.getElementById('sectionHeaderTitle');
@@ -86,14 +106,11 @@ window.mostraSezione = function (sezione) {
     } else if (sezione === 'riepilogo') {
         secCalendario.classList.add('hidden');
         secRiepilogo.classList.remove('hidden');
-
-        // Se entriamo dal menu normale, assicuriamoci che il box sia il select standard
         ripristinaSelectRiepilogoStruttura();
         popolaSelectRiepilogo();
     }
 };
 
-// --- ATTIVAZIONE ARCHIVIO DAL MENU ---
 window.showArchivedMatches = function () {
     toggleSidebar(false);
     mostraSoloArchivio = true;
@@ -109,26 +126,91 @@ window.showArchivedMatches = function () {
     const addBtn = document.querySelector('button[onclick="toggleMatchForm()"]');
     if (addBtn) addBtn.style.display = 'none';
 
+    renderFiltriArchivio();
     renderMatches();
+};
+
+// --- GESTIONE FILTRI ARCHIVIO ---
+function renderFiltriArchivio() {
+    let filtroContainer = document.getElementById('archivioFiltriContainer');
+    if (!filtroContainer) {
+        filtroContainer = document.createElement('div');
+        filtroContainer.id = 'archivioFiltriContainer';
+        filtroContainer.className = "bg-white dark:bg-slate-800 p-3 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 space-y-2 mb-3";
+
+        const matchList = document.getElementById('matchList');
+        if (matchList && matchList.parentNode) {
+            matchList.parentNode.insertBefore(filtroContainer, matchList);
+        }
+    }
+
+    filtroContainer.innerHTML = `
+        <div class="space-y-2">
+            <input type="text" id="filtroTesto" placeholder="Cerca squadra avversaria..." oninput="renderMatches()"
+                class="w-full p-2.5 border dark:border-slate-600 rounded-xl text-xs bg-slate-50 dark:bg-slate-700 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            
+            <div class="grid grid-cols-2 gap-2">
+                <select id="filtroLuogo" onchange="renderMatches()"
+                    class="w-full p-2 border dark:border-slate-600 rounded-xl text-xs bg-slate-50 dark:bg-slate-700 text-slate-800 dark:text-white focus:outline-none">
+                    <option value="">Tutti i luoghi</option>
+                    <option value="Casa">Casa</option>
+                    <option value="Trasferta">Trasferta</option>
+                </select>
+
+                <select id="filtroMeseAnno" onchange="renderMatches()"
+                    class="w-full p-2 border dark:border-slate-600 rounded-xl text-xs bg-slate-50 dark:bg-slate-700 text-slate-800 dark:text-white focus:outline-none">
+                    <option value="">Tutti i periodi</option>
+                </select>
+            </div>
+        </div>
+    `;
+
+    popolaOpzioniMeseAnno();
+}
+
+function popolaOpzioniMeseAnno() {
+    const selectMese = document.getElementById('filtroMeseAnno');
+    if (!selectMese) return;
+
+    const valoreCorrente = selectMese.value;
+    const adesso = new Date();
+    const partitePassate = cachePartiteGlobali.filter(m => new Date(m.data_ora) < adesso);
+
+    const mesiSet = new Set();
+    partitePassate.forEach(m => {
+        const d = new Date(m.data_ora);
+        const anno = d.getFullYear();
+        const mese = String(d.getMonth() + 1).padStart(2, '0');
+        mesiSet.add(`${anno}-${mese}`);
+    });
+
+    let optionsHtml = '<option value="">Tutti i periodi</option>';
+    Array.from(mesiSet).sort().reverse().forEach(ym => {
+        const [anno, mese] = ym.split('-');
+        const nomeMese = new Date(anno, mese - 1).toLocaleString('it-IT', { month: 'long', year: 'numeric' });
+        const nomeMeseFormatted = nomeMese.charAt(0).toUpperCase() + nomeMese.slice(1);
+        optionsHtml += `<option value="${ym}">${nomeMeseFormatted}</option>`;
+    });
+
+    selectMese.innerHTML = optionsHtml;
+    selectMese.value = valoreCorrente;
+}
+
+window.rimuoviFiltriArchivio = function () {
+    const filtroContainer = document.getElementById('archivioFiltriContainer');
+    if (filtroContainer) filtroContainer.remove();
 };
 
 async function testaConnessioneGiocatrici() {
     const { data, error } = await db.from('giocatrici').select('*');
-    if (error) {
-        console.error("Errore di connessione a Supabase:", error);
-    } else {
-        console.log("Connessione OK! Elenco giocatrici dal DB:", data);
-    }
+    if (error) console.error("Errore di connessione a Supabase:", error);
 }
 
 window.eseguiLogin = async function () {
     const inputNome = document.getElementById('authNome');
     const inputCognome = document.getElementById('authCognome');
 
-    if (!inputNome || !inputCognome) {
-        alert('Campi di login non trovati.');
-        return;
-    }
+    if (!inputNome || !inputCognome) return;
 
     const nomeVal = inputNome.value.trim();
     const cognomeVal = inputCognome.value.trim();
@@ -145,31 +227,22 @@ window.eseguiLogin = async function () {
             .ilike('nome', nomeVal)
             .ilike('cognome', cognomeVal);
 
-        if (error) {
-            alert('Errore dal database: ' + error.message);
-            return;
-        }
-
-        if (!data || data.length === 0) {
+        if (error || !data || data.length === 0) {
             alert('Giocatrice non trovata nel database della squadra.');
             return;
         }
 
-        const giocatrice = data[0];
-
         currentUser = {
-            id: giocatrice.id,
-            nome: giocatrice.nome,
-            cognome: giocatrice.cognome,
-            ruolo: giocatrice.ruolo
+            id: data[0].id,
+            nome: data[0].nome,
+            cognome: data[0].cognome,
+            ruolo: data[0].ruolo
         };
 
         localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUser));
         aggiornaInterfaccia();
-
     } catch (err) {
-        console.error('Errore di connessione:', err);
-        alert('Errore di connessione al database: ' + err.message);
+        alert('Errore di connessione: ' + err.message);
     }
 };
 
@@ -177,12 +250,6 @@ window.logoutUser = function () {
     toggleSidebar(false);
     localStorage.removeItem(STORAGE_KEY);
     currentUser = null;
-
-    const inputNome = document.getElementById('authNome');
-    const inputCognome = document.getElementById('authCognome');
-    if (inputNome) inputNome.value = '';
-    if (inputCognome) inputCognome.value = '';
-
     aggiornaInterfaccia();
 };
 
@@ -196,10 +263,7 @@ function aggiornaInterfaccia() {
     } else {
         if (viewAuth) viewAuth.style.display = "none";
         if (viewDashboard) viewDashboard.style.display = "block";
-
-        if (typeof window.mostraSezione === 'function') {
-            window.mostraSezione('calendario');
-        }
+        if (typeof window.mostraSezione === 'function') window.mostraSezione('calendario');
 
         const dispName = document.getElementById('currentUserDisplay');
         const dispRole = document.getElementById('currentUserRole');
@@ -218,6 +282,7 @@ window.toggleMatchForm = function (isEdit = false) {
         matchForm.reset();
         document.getElementById('matchId').value = '';
         document.getElementById('formTitle').textContent = 'Nuova Partita';
+        document.getElementById('indirizzo').value = INDIRIZZO_CASA;
     }
 };
 
@@ -226,6 +291,7 @@ window.editMatch = function (match) {
     document.getElementById('avversario').value = match.avversario;
     document.getElementById('dataOra').value = match.data_ora ? match.data_ora.slice(0, 16) : '';
     document.getElementById('luogo').value = match.luogo || 'Casa';
+    document.getElementById('indirizzo').value = match.indirizzo || '';
     document.getElementById('formTitle').textContent = 'Modifica Partita';
     document.getElementById('matchFormContainer').classList.remove('hidden');
 };
@@ -253,28 +319,46 @@ async function fetchMatches() {
     popolaSelectRiepilogo();
 }
 
-// --- RENDERIZZAZIONE INTELLIGENTE DELLE PARTITE (HOME VS ARCHIVIO) ---
 function renderMatches() {
     const matchList = document.getElementById('matchList');
     if (!matchList) return;
 
     matchList.innerHTML = '';
-
     const adesso = new Date();
 
     const partitePassate = cachePartiteGlobali.filter(m => new Date(m.data_ora) < adesso);
     const partiteFuture = cachePartiteGlobali.filter(m => new Date(m.data_ora) >= adesso);
 
-    // SE SIAMO NELLA SEZIONE ARCHIVIO
+    // SE SIAMO NELLA SEZIONE ARCHIVIO CON FILTRI APPLICATI
     if (mostraSoloArchivio) {
-        partitePassate.sort((a, b) => new Date(b.data_ora) - new Date(a.data_ora));
+        let filtrate = [...partitePassate];
 
-        if (partitePassate.length === 0) {
-            matchList.innerHTML = '<p class="text-xs text-slate-400 text-center py-6">Nessuna partita archiviata al momento.</p>';
+        const testoQuery = document.getElementById('filtroTesto')?.value.toLowerCase().trim() || '';
+        const luogoQuery = document.getElementById('filtroLuogo')?.value || '';
+        const meseAnnoQuery = document.getElementById('filtroMeseAnno')?.value || '';
+
+        if (testoQuery) {
+            filtrate = filtrate.filter(m => m.avversario.toLowerCase().includes(testoQuery));
+        }
+        if (luogoQuery) {
+            filtrate = filtrate.filter(m => m.luogo === luogoQuery);
+        }
+        if (meseAnnoQuery) {
+            filtrate = filtrate.filter(m => {
+                const d = new Date(m.data_ora);
+                const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                return ym === meseAnnoQuery;
+            });
+        }
+
+        filtrate.sort((a, b) => new Date(b.data_ora) - new Date(a.data_ora));
+
+        if (filtrate.length === 0) {
+            matchList.innerHTML = '<p class="text-xs text-slate-400 text-center py-6">Nessuna partita trovata con i filtri applicati.</p>';
             return;
         }
 
-        partitePassate.forEach(match => {
+        filtrate.forEach(match => {
             matchList.appendChild(creaCardElement(match, true));
         });
         return;
@@ -314,7 +398,6 @@ function renderMatches() {
     }
 }
 
-// Funzione di supporto per creare la singola card
 function creaCardElement(match, isArchivio = false, isInEvidenza = false) {
     const dateFormatted = new Date(match.data_ora).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
 
@@ -342,6 +425,26 @@ function creaCardElement(match, isArchivio = false, isInEvidenza = false) {
         ? `apriDettaglioArchivio('${match.id}')`
         : `openPresenceModal('${match.id}', '${match.avversario.replace(/'/g, "\\'")}')`;
 
+    let mappaHtml = '';
+    if (match.indirizzo && match.indirizzo.trim() !== '') {
+        const encodedAddress = encodeURIComponent(match.indirizzo);
+        const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
+
+        mappaHtml = `
+            <div class="mt-2 pt-2 border-t border-slate-100 dark:border-slate-700/60 space-y-2">
+                <div class="flex items-center space-x-1.5 text-xs text-slate-500 dark:text-slate-400">
+                    <svg class="w-4 h-4 text-indigo-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    <span class="truncate">${match.indirizzo}</span>
+                </div>
+                <a href="${googleMapsUrl}" target="_blank" onclick="event.stopPropagation()"
+                   class="w-full bg-slate-100 hover:bg-indigo-50 dark:bg-slate-700/60 dark:hover:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 text-xs font-semibold py-2 px-3 rounded-xl flex items-center justify-center space-x-2 transition border border-slate-200 dark:border-slate-600">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path></svg>
+                    <span>Apri in Google Maps</span>
+                </a>
+            </div>
+        `;
+    }
+
     card.innerHTML = `
         <div class="flex justify-between items-start">
             <div onclick="${clickAction}" class="cursor-pointer flex-1">
@@ -361,22 +464,21 @@ function creaCardElement(match, isArchivio = false, isInEvidenza = false) {
                 ` : ''}
             </div>
         </div>
+        ${mappaHtml}
     `;
 
     return card;
 }
 
-// --- APERTURA DIRETTA DEL DETTAGLIO DALL'ARCHIVIO (BOX FISSO GRIGINO SENZA MENU) ---
 window.apriDettaglioArchivio = function (matchId) {
     mostraSezione('riepilogo');
-
+    rimuoviFiltriArchivio();
     const matchInfo = cachePartiteGlobali.find(m => m.id === matchId);
     if (!matchInfo) return;
 
     const selectContainer = document.getElementById('selectPartitaRiepilogo').parentElement;
     const dataFormatted = new Date(matchInfo.data_ora).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
 
-    // Sostituiamo il select con un box fisso grigino non interattivo
     selectContainer.innerHTML = `
         <h2 class="font-bold text-slate-800 dark:text-white text-base">Partita Archiviata</h2>
         <p class="text-xs text-slate-500 dark:text-slate-400">Resoconto storico della partita selezionata.</p>
@@ -390,7 +492,6 @@ window.apriDettaglioArchivio = function (matchId) {
     caricaDettaglioPartita(matchId);
 };
 
-// Ripristina la struttura originale del box di selezione
 window.ripristinaSelectRiepilogoStruttura = function () {
     const container = document.getElementById('section-riepilogo');
     const boxCard = container.querySelector('.bg-white, .dark\\:bg-slate-800');
@@ -409,7 +510,6 @@ window.ripristinaSelectRiepilogoStruttura = function () {
     if (dettaglioContainer) dettaglioContainer.classList.add('hidden');
 };
 
-// --- LOGICA SELECT E RIEPILOGO PRESENZE/RUOLI (SOLO PARTITE FUTURE NEL MENU A TENDINA) ---
 function popolaSelectRiepilogo() {
     const select = document.getElementById('selectPartitaRiepilogo');
     if (!select) return;
@@ -468,7 +568,6 @@ window.caricaDettaglioPartita = async function (matchId) {
 
     giocatrici.forEach(g => {
         const registro = presenze.find(p => p.giocatrice_id === g.id);
-
         if (registro && registro.presente === true) {
             presentiList.push(g);
             conteggioRuoli[g.ruolo] = (conteggioRuoli[g.ruolo] || 0) + 1;
@@ -503,12 +602,40 @@ window.caricaDettaglioPartita = async function (matchId) {
     divRuoli.innerHTML = ruoliFissi.map(r => {
         const quanti = conteggioRuoli[r] || 0;
         return `
-            <div class="bg-indigo-800/60 dark:bg-indigo-900/60 p-2.5 rounded-xl flex justify-between items-center border border-indigo-700/60">
-                <span class="text-xs text-indigo-200">${r}</span>
+            <div class="bg-indigo-600 dark:bg-indigo-700 p-2.5 rounded-xl flex justify-between items-center border border-indigo-500/50 shadow-sm">
+                <span class="text-xs text-indigo-100 font-medium">${r}</span>
                 <span class="font-bold text-base text-white">${quanti}</span>
             </div>
         `;
     }).join('');
+
+    let mappaContainerDettaglio = document.getElementById('mappaDettaglioContainer');
+    if (!mappaContainerDettaglio) {
+        mappaContainerDettaglio = document.createElement('div');
+        mappaContainerDettaglio.id = 'mappaDettaglioContainer';
+        container.appendChild(mappaContainerDettaglio);
+    }
+
+    if (matchInfo.indirizzo && matchInfo.indirizzo.trim() !== '') {
+        const encodedAddress = encodeURIComponent(matchInfo.indirizzo);
+        const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
+
+        mappaContainerDettaglio.innerHTML = `
+            <div class="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 space-y-2 mt-4">
+                <div class="flex items-center space-x-1.5 text-xs text-slate-500 dark:text-slate-400">
+                    <svg class="w-4 h-4 text-indigo-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                    <span class="truncate font-medium text-slate-700 dark:text-slate-200">${matchInfo.indirizzo}</span>
+                </div>
+                <a href="${googleMapsUrl}" target="_blank"
+                   class="w-full bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-600 dark:text-indigo-300 text-xs font-semibold py-2.5 px-3 rounded-xl flex items-center justify-center space-x-2 transition border border-indigo-100 dark:border-indigo-800/60">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"></path></svg>
+                    <span>Apri in Google Maps</span>
+                </a>
+            </div>
+        `;
+    } else {
+        mappaContainerDettaglio.innerHTML = '';
+    }
 };
 
 window.openPresenceModal = function (matchId, avversario) {
