@@ -7,6 +7,7 @@ let currentUser = JSON.parse(localStorage.getItem(STORAGE_KEY)) || null;
 let activeMatchIdForPresence = null;
 let cachePartiteGlobali = [];
 let mostraSoloArchivio = false;
+let controlloScadenzaInCorso = false;
 
 // Indirizzo fisso della palestra di casa
 const INDIRIZZO_CASA = "Oratorio Don Bosco Carugate, Via Papa Pio XI, 36, 20061 Carugate MI";
@@ -51,6 +52,217 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 });
 
+async function inserisciInfortunioStoricoSicuro(giocatriceId, dataInizio, dataFine) {
+    if (!giocatriceId || !dataInizio || !dataFine) return;
+
+    const { data: esistenti } = await db
+        .from('infortuni')
+        .select('id')
+        .eq('giocatrice_id', giocatriceId)
+        .eq('data_inizio', dataInizio)
+        .eq('data_fine', dataFine);
+
+    if (!esistenti || esistenti.length === 0) {
+        await db.from('infortuni').insert([{
+            giocatrice_id: giocatriceId,
+            data_inizio: dataInizio,
+            data_fine: dataFine
+        }]);
+    }
+}
+
+// --- VERIFICA SCADENZA AUTOMATICA INFORTUNIO ---
+async function controllaScadenzaInfortunio() {
+    if (!currentUser || !currentUser.infortunata || controlloScadenzaInCorso) return;
+
+    controlloScadenzaInCorso = true;
+    try {
+        if (currentUser.data_fine_infortunio) {
+            const oggi = new Date();
+            oggi.setHours(0, 0, 0, 0);
+            const dataFine = new Date(currentUser.data_fine_infortunio);
+            dataFine.setHours(0, 0, 0, 0);
+
+            if (oggi > dataFine) {
+                const inizioDaArchiviare = currentUser.data_inizio_infortunio;
+                const fineDaArchiviare = currentUser.data_fine_infortunio;
+
+                currentUser.infortunata = false;
+                currentUser.data_inizio_infortunio = null;
+                currentUser.data_fine_infortunio = null;
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUser));
+
+                const datiReset = {
+                    infortunata: false,
+                    data_inizio_infortunio: null,
+                    data_fine_infortunio: null
+                };
+
+                await db.from('giocatrici').update(datiReset).eq('id', currentUser.id);
+
+                if (inizioDaArchiviare) {
+                    await inserisciInfortunioStoricoSicuro(currentUser.id, inizioDaArchiviare, fineDaArchiviare);
+                }
+            }
+        }
+    } catch (err) {
+        console.error("Errore controllo scadenza infortunio:", err);
+    } finally {
+        controlloScadenzaInCorso = false;
+    }
+}
+
+// --- GESTIONE MODALE PROFILO E INFORTUNIO ---
+window.openProfileModal = function () {
+    if (!currentUser) return;
+    toggleSidebar(false);
+
+    document.getElementById('editProfileNomeCognome').value = `${currentUser.nome} ${currentUser.cognome}`;
+    document.getElementById('editProfileRuolo').value = currentUser.ruolo || 'Palleggiatrice';
+    document.getElementById('editProfileAnno').value = currentUser.anno_nascita || '';
+
+    const toggle = document.getElementById('editInfortunioToggle');
+    const dataInizio = document.getElementById('editDataInizio');
+    const dataFine = document.getElementById('editDataFine');
+
+    toggle.checked = !!currentUser.infortunata;
+    dataInizio.value = currentUser.data_inizio_infortunio || '';
+    dataFine.value = currentUser.data_fine_infortunio || '';
+
+    toggleInfortunioFields(toggle.checked);
+
+    document.getElementById('profileModal').classList.remove('hidden');
+};
+
+window.closeProfileModal = function () {
+    document.getElementById('profileModal').classList.add('hidden');
+};
+
+window.toggleInfortunioFields = function (attivo) {
+    const container = document.getElementById('containerDateInfortunio');
+    const dataInizio = document.getElementById('editDataInizio');
+
+    if (attivo) {
+        container.classList.remove('opacity-40', 'pointer-events-none');
+        if (!dataInizio.value) {
+            const oggi = new Date().toISOString().split('T')[0];
+            dataInizio.value = oggi;
+        }
+    } else {
+        container.classList.add('opacity-40', 'pointer-events-none');
+    }
+};
+
+window.gestisciCambioToggleInfortunio = function (nuovoStato) {
+    const eraInfortunata = currentUser && currentUser.infortunata;
+
+    if (eraInfortunata && !nuovoStato) {
+        const testoModale = document.getElementById('confirmRientroText');
+        const dataFineInserita = document.getElementById('editDataFine').value || currentUser.data_fine_infortunio;
+
+        if (testoModale) {
+            if (dataFineInserita) {
+                const dataFormatted = new Date(dataFineInserita).toLocaleDateString('it-IT');
+                testoModale.textContent = `Confermi di rientrare prima della data inserita (${dataFormatted})? Verrà aggiornata la data inserendo quella di oggi e salvata nello storico.`;
+            } else {
+                testoModale.textContent = `Confermi di rientrare? Verrà inserita in automatico la data di oggi e l'infortunio verrà salvato nello storico.`;
+            }
+        }
+        document.getElementById('confirmRientroModal').classList.remove('hidden');
+    } else {
+        toggleInfortunioFields(nuovoStato);
+    }
+};
+
+window.confermaRientro = function (confermato) {
+    const toggle = document.getElementById('editInfortunioToggle');
+    const dataFineInput = document.getElementById('editDataFine');
+    const oggi = new Date().toISOString().split('T')[0];
+
+    if (confermato) {
+        toggle.checked = false;
+        dataFineInput.value = oggi;
+        toggleInfortunioFields(false);
+    } else {
+        toggle.checked = true;
+        toggleInfortunioFields(true);
+    }
+    document.getElementById('confirmRientroModal').classList.add('hidden');
+};
+
+window.salvaProfilo = async function () {
+    if (!currentUser) return;
+
+    const nuovoRuolo = document.getElementById('editProfileRuolo').value;
+    const nuovoAnno = document.getElementById('editProfileAnno').value.trim();
+    const infortunata = document.getElementById('editInfortunioToggle').checked;
+    const dataInizioVal = document.getElementById('editDataInizio').value.trim();
+    const dataFineVal = document.getElementById('editDataFine').value.trim();
+
+    if (infortunata && !dataInizioVal) {
+        alert("Inserisci la data di inizio infortunio!");
+        return;
+    }
+
+    if (infortunata && dataInizioVal && dataFineVal && dataFineVal < dataInizioVal) {
+        alert("La data di rientro non può essere precedente alla data di inizio infortunio!");
+        return;
+    }
+
+    const eraInfortunata = currentUser.infortunata;
+    const inizioPrecedente = currentUser.data_inizio_infortunio;
+    const oggiStr = new Date().toISOString().split('T')[0];
+
+    let statoInfortunataFinale = infortunata;
+    let dataInizioFinale = infortunata ? dataInizioVal : null;
+    let dataFineFinale = (infortunata && dataFineVal !== "") ? dataFineVal : null;
+
+    if (eraInfortunata && !infortunata) {
+        const dataInizioStorico = inizioPrecedente || dataInizioVal;
+        const dataFineStorico = dataFineVal !== "" ? dataFineVal : oggiStr;
+
+        if (dataInizioStorico) {
+            await inserisciInfortunioStoricoSicuro(currentUser.id, dataInizioStorico, dataFineStorico);
+        }
+        statoInfortunataFinale = false;
+        dataInizioFinale = null;
+        dataFineFinale = null;
+    } else if (infortunata && dataFineVal !== "" && dataFineVal < oggiStr) {
+        await inserisciInfortunioStoricoSicuro(currentUser.id, dataInizioVal, dataFineVal);
+        statoInfortunataFinale = false;
+        dataInizioFinale = null;
+        dataFineFinale = null;
+    }
+
+    const datiAggiornati = {
+        ruolo: nuovoRuolo,
+        anno_nascita: nuovoAnno !== "" ? nuovoAnno : null,
+        infortunata: statoInfortunataFinale,
+        data_inizio_infortunio: dataInizioFinale,
+        data_fine_infortunio: dataFineFinale
+    };
+
+    const { data, error } = await db.from('giocatrici').update(datiAggiornati).eq('id', currentUser.id).select();
+
+    if (error) {
+        alert('Errore nel salvataggio del profilo: ' + error.message);
+    } else {
+        if (data && data.length > 0) {
+            currentUser = data[0];
+        } else {
+            currentUser.ruolo = nuovoRuolo;
+            currentUser.anno_nascita = datiAggiornati.anno_nascita;
+            currentUser.infortunata = datiAggiornati.infortunata;
+            currentUser.data_inizio_infortunio = datiAggiornati.data_inizio_infortunio;
+            currentUser.data_fine_infortunio = datiAggiornati.data_fine_infortunio;
+        }
+
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUser));
+        closeProfileModal();
+        aggiornaInterfaccia();
+    }
+};
+
 // --- GESTIONE AUTOCOMPILAZIONE INDIRIZZO CASA ---
 window.gestisciCambioLuogo = function (luogoSelezionato) {
     const inputIndirizzo = document.getElementById('indirizzo');
@@ -65,7 +277,7 @@ window.gestisciCambioLuogo = function (luogoSelezionato) {
     }
 };
 
-// --- GESTIONE TEMA CHIARO / SCURO ---
+// --- GESTIONE TEMA ---
 window.toggleTheme = function () {
     const isDark = document.documentElement.classList.toggle('dark');
     localStorage.setItem('volley_theme', isDark ? 'dark' : 'light');
@@ -90,8 +302,13 @@ window.mostraSezione = function (sezione) {
     toggleSidebar(false);
     const secCalendario = document.getElementById('section-calendario');
     const secRiepilogo = document.getElementById('section-riepilogo');
+    const secInfortuni = document.getElementById('section-infortuni');
 
-    rimuoviFiltriArchivio(); // Pulisce i filtri dell'archivio se si cambia sezione
+    rimuoviFiltriArchivio();
+
+    secCalendario.classList.add('hidden');
+    secRiepilogo.classList.add('hidden');
+    secInfortuni.classList.add('hidden');
 
     if (sezione === 'calendario') {
         mostraSoloArchivio = false;
@@ -101,15 +318,77 @@ window.mostraSezione = function (sezione) {
         if (addBtn) addBtn.style.display = 'flex';
 
         secCalendario.classList.remove('hidden');
-        secRiepilogo.classList.add('hidden');
         renderMatches();
     } else if (sezione === 'riepilogo') {
-        secCalendario.classList.add('hidden');
         secRiepilogo.classList.remove('hidden');
         ripristinaSelectRiepilogoStruttura();
         popolaSelectRiepilogo();
+    } else if (sezione === 'infortuni') {
+        secInfortuni.classList.remove('hidden');
+        caricaStoricoInfortuni();
     }
 };
+
+async function caricaStoricoInfortuni() {
+    const container = document.getElementById('listaStoricoInfortuni');
+    if (!container || !currentUser) return;
+
+    container.innerHTML = '<p class="text-xs text-slate-400 text-center py-4">Caricamento storico...</p>';
+
+    await controllaScadenzaInfortunio();
+
+    const { data, error } = await db
+        .from('infortuni')
+        .select('*')
+        .eq('giocatrice_id', currentUser.id)
+        .order('data_inizio', { ascending: false });
+
+    if (error) {
+        container.innerHTML = '<p class="text-xs text-rose-500 text-center py-4">Errore nel caricamento dello storico.</p>';
+        return;
+    }
+
+    let htmlAttivo = '';
+    if (currentUser.infortunata && currentUser.data_inizio_infortunio) {
+        const dInizio = new Date(currentUser.data_inizio_infortunio).toLocaleDateString('it-IT');
+        const testoFine = currentUser.data_fine_infortunio
+            ? `fino al ${new Date(currentUser.data_fine_infortunio).toLocaleDateString('it-IT')}`
+            : 'ad oggi';
+
+        htmlAttivo = `
+            <div class="bg-amber-50 dark:bg-amber-950/30 p-4 rounded-2xl border border-amber-200 dark:border-amber-900/40 space-y-2">
+                <div class="flex justify-between items-center">
+                    <span class="text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wide">Infortunio Attivo</span>
+                    <span class="text-xs bg-amber-200 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-md font-medium">In corso</span>
+                </div>
+                <p class="text-sm font-semibold text-slate-800 dark:text-white">Dal ${dInizio} ${testoFine}</p>
+            </div>
+        `;
+    }
+
+    let htmlStorico = '';
+    if (data && data.length > 0) {
+        htmlStorico = data.map(inf => {
+            const dInizio = new Date(inf.data_inizio).toLocaleDateString('it-IT');
+            const dFine = inf.data_fine ? new Date(inf.data_fine).toLocaleDateString('it-IT') : 'N/D';
+            return `
+                <div class="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 space-y-2">
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs font-semibold text-indigo-600 dark:text-indigo-400">Periodo di Stop</span>
+                        <span class="text-xs bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2.5 py-1 rounded-full font-medium">Concluso</span>
+                    </div>
+                    <p class="text-sm font-medium text-slate-700 dark:text-slate-200">Dal <strong class="text-slate-900 dark:text-white">${dInizio}</strong> al <strong class="text-slate-900 dark:text-white">${dFine}</strong></p>
+                </div>
+            `;
+        }).join('');
+    }
+
+    if (!htmlAttivo && (!data || data.length === 0)) {
+        container.innerHTML = '<p class="text-xs text-slate-400 text-center py-6">Nessun infortunio registrato nello storico.</p>';
+    } else {
+        container.innerHTML = htmlAttivo + htmlStorico;
+    }
+}
 
 window.showArchivedMatches = function () {
     toggleSidebar(false);
@@ -117,8 +396,11 @@ window.showArchivedMatches = function () {
 
     const secCalendario = document.getElementById('section-calendario');
     const secRiepilogo = document.getElementById('section-riepilogo');
-    if (secCalendario) secCalendario.classList.remove('hidden');
-    if (secRiepilogo) secRiepilogo.classList.add('hidden');
+    const secInfortuni = document.getElementById('section-infortuni');
+
+    secCalendario.classList.remove('hidden');
+    secRiepilogo.classList.add('hidden');
+    secInfortuni.classList.add('hidden');
 
     const headerTitle = document.getElementById('sectionHeaderTitle');
     if (headerTitle) headerTitle.innerText = "Archivio Partite Passate";
@@ -130,7 +412,6 @@ window.showArchivedMatches = function () {
     renderMatches();
 };
 
-// --- GESTIONE FILTRI ARCHIVIO ---
 function renderFiltriArchivio() {
     let filtroContainer = document.getElementById('archivioFiltriContainer');
     if (!filtroContainer) {
@@ -232,14 +513,11 @@ window.eseguiLogin = async function () {
             return;
         }
 
-        currentUser = {
-            id: data[0].id,
-            nome: data[0].nome,
-            cognome: data[0].cognome,
-            ruolo: data[0].ruolo
-        };
-
+        currentUser = data[0];
         localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUser));
+
+        await controllaScadenzaInfortunio();
+
         aggiornaInterfaccia();
     } catch (err) {
         alert('Errore di connessione: ' + err.message);
@@ -263,15 +541,59 @@ function aggiornaInterfaccia() {
     } else {
         if (viewAuth) viewAuth.style.display = "none";
         if (viewDashboard) viewDashboard.style.display = "block";
-        if (typeof window.mostraSezione === 'function') window.mostraSezione('calendario');
 
         const dispName = document.getElementById('currentUserDisplay');
         const dispRole = document.getElementById('currentUserRole');
         if (dispName) dispName.textContent = `${currentUser.nome} ${currentUser.cognome}`;
         if (dispRole) dispRole.textContent = currentUser.ruolo;
 
+        const sidebarName = document.getElementById('sidebarProfileName');
+        const sidebarRoleYear = document.getElementById('sidebarProfileRoleYear');
+        const sidebarInitials = document.getElementById('sidebarAvatarInitials');
+
+        if (sidebarName) sidebarName.textContent = `${currentUser.nome} ${currentUser.cognome}`;
+        if (sidebarRoleYear) {
+            sidebarRoleYear.textContent = currentUser.anno_nascita
+                ? `${currentUser.ruolo || 'Ruolo'} • ${currentUser.anno_nascita}`
+                : `${currentUser.ruolo || 'Ruolo'}`;
+        }
+        if (sidebarInitials) {
+            const iniziali = `${currentUser.nome.charAt(0)}${currentUser.cognome.charAt(0)}`.toUpperCase();
+            sidebarInitials.textContent = iniziali;
+        }
+
+        const secInfortuni = document.getElementById('section-infortuni');
+        if (secInfortuni && !secInfortuni.classList.contains('hidden')) {
+            caricaStoricoInfortuni();
+        }
+
         fetchMatches();
     }
+}
+
+function isGiocatriceInfortunataPerPartita(matchDateStr, giocatrice) {
+    let target = giocatrice;
+    if (currentUser && target && target.id === currentUser.id) {
+        target = currentUser;
+    }
+
+    if (!target || !target.infortunata || !target.data_inizio_infortunio) return false;
+
+    const matchDate = new Date(matchDateStr);
+    const dataInizio = new Date(target.data_inizio_infortunio);
+
+    matchDate.setHours(0, 0, 0, 0);
+    dataInizio.setHours(0, 0, 0, 0);
+
+    if (matchDate < dataInizio) return false;
+
+    if (target.data_fine_infortunio) {
+        const dataFine = new Date(target.data_fine_infortunio);
+        dataFine.setHours(23, 59, 59, 999);
+        if (matchDate > dataFine) return false;
+    }
+
+    return true;
 }
 
 window.toggleMatchForm = function (isEdit = false) {
@@ -304,6 +626,10 @@ window.deleteMatch = async function (id) {
 };
 
 async function fetchMatches() {
+    if (currentUser) {
+        await controllaScadenzaInfortunio();
+    }
+
     const { data, error } = await db
         .from('partite')
         .select(`*, presenze(giocatrice_id, presente)`)
@@ -329,7 +655,6 @@ function renderMatches() {
     const partitePassate = cachePartiteGlobali.filter(m => new Date(m.data_ora) < adesso);
     const partiteFuture = cachePartiteGlobali.filter(m => new Date(m.data_ora) >= adesso);
 
-    // SE SIAMO NELLA SEZIONE ARCHIVIO CON FILTRI APPLICATI
     if (mostraSoloArchivio) {
         let filtrate = [...partitePassate];
 
@@ -364,7 +689,6 @@ function renderMatches() {
         return;
     }
 
-    // SE SIAMO NELLA HOME (CALENDARIO ATTIVO)
     if (cachePartiteGlobali.length === 0 || (partiteFuture.length === 0 && partitePassate.length === 0)) {
         matchList.innerHTML = '<p class="text-xs text-slate-400 text-center py-4">Nessuna partita in programma.</p>';
         return;
@@ -401,22 +725,30 @@ function renderMatches() {
 function creaCardElement(match, isArchivio = false, isInEvidenza = false) {
     const dateFormatted = new Date(match.data_ora).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
 
-    let miaPresenza = null;
-    if (currentUser && match.presenze) {
-        const p = match.presenze.find(x => x.giocatrice_id === currentUser.id);
-        if (p) miaPresenza = p.presente;
-    }
+    let badgeStatus = '';
+    const isInfortunataMatch = isGiocatriceInfortunataPerPartita(match.data_ora, currentUser);
 
-    let badgeStatus = '<span class="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-full font-medium">Non risposto</span>';
-    if (miaPresenza === true) badgeStatus = '<span class="text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-full font-medium">Ci sono</span>';
-    if (miaPresenza === false) badgeStatus = '<span class="text-xs text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-1 rounded-full font-medium">Assente</span>';
+    if (isInfortunataMatch) {
+        badgeStatus = '<span class="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-full font-medium">Infortunata</span>';
+    } else {
+        let miaPresenza = null;
+        if (currentUser && match.presenze) {
+            const p = match.presenze.find(x => x.giocatrice_id === currentUser.id);
+            if (p) miaPresenza = p.presente;
+        }
+
+        badgeStatus = '<span class="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-full font-medium">Non risposto</span>';
+        if (miaPresenza === true) badgeStatus = '<span class="text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-full font-medium">Ci sono</span>';
+        if (miaPresenza === false) badgeStatus = '<span class="text-xs text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-1 rounded-full font-medium">Assente</span>';
+    }
 
     const card = document.createElement('div');
 
     if (isInEvidenza) {
         card.className = "bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-md border-2 border-indigo-500 flex flex-col space-y-3 transition-colors";
     } else if (isArchivio) {
-        card.className = "bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col space-y-3 transition-colors cursor-pointer hover:border-indigo-500";
+        // Ripristinato lo sfondo grigino/differenziato per le partite passate
+        card.className = "bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col space-y-3 transition-colors cursor-pointer hover:border-indigo-500";
     } else {
         card.className = "bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 flex flex-col space-y-3 transition-colors";
     }
@@ -486,7 +818,7 @@ window.apriDettaglioArchivio = function (matchId) {
             <span>vs ${matchInfo.avversario} (${dataFormatted})</span>
             <span class="text-xs bg-slate-200 dark:bg-slate-600 px-2.5 py-1 rounded text-slate-500 dark:text-slate-300">Archiviata</span>
         </div>
-        <button type="button" onclick="ripristinaSelectRiepilogoStruttura()" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline pt-1 inline-block cursor-pointer">← Torna alle partite future</button>
+        <button type="button" onclick="showArchivedMatches()" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline pt-1 inline-block cursor-pointer">← Torna alle partite archiviate</button>
     `;
 
     caricaDettaglioPartita(matchId);
@@ -537,8 +869,10 @@ window.caricaDettaglioPartita = async function (matchId) {
     const container = document.getElementById('dettaglioPartitaContainer');
     const titolo = document.getElementById('dettaglioTitoloMatch');
     const divPresenti = document.getElementById('listaPresentiDettaglio');
+    const divInfortunate = document.getElementById('listaInfortunateDettaglio');
     const divAssenti = document.getElementById('listaAssentiDettaglio');
     const divRuoli = document.getElementById('conteggioRuoliDettaglio');
+    const sezioneInfortunateWrapper = document.getElementById('sezioneInfortunateDettaglioWrapper');
 
     if (!matchId) {
         container.classList.add('hidden');
@@ -547,6 +881,7 @@ window.caricaDettaglioPartita = async function (matchId) {
 
     container.classList.remove('hidden');
     divPresenti.innerHTML = '<p class="text-xs text-slate-400">Caricamento...</p>';
+    if (divInfortunate) divInfortunate.innerHTML = '<p class="text-xs text-slate-400">Caricamento...</p>';
     divAssenti.innerHTML = '<p class="text-xs text-slate-400">Caricamento...</p>';
     divRuoli.innerHTML = '';
 
@@ -563,16 +898,26 @@ window.caricaDettaglioPartita = async function (matchId) {
     titolo.textContent = `Partita vs ${matchInfo.avversario}`;
 
     let presentiList = [];
+    let infortunateList = [];
     let assentiList = [];
     let conteggioRuoli = {};
 
     giocatrici.forEach(g => {
-        const registro = presenze.find(p => p.giocatrice_id === g.id);
-        if (registro && registro.presente === true) {
-            presentiList.push(g);
-            conteggioRuoli[g.ruolo] = (conteggioRuoli[g.ruolo] || 0) + 1;
-        } else if (registro && registro.presente === false) {
-            assentiList.push(g);
+        let giocatriceDaControllare = g;
+        if (currentUser && g.id === currentUser.id) {
+            giocatriceDaControllare = currentUser;
+        }
+
+        if (isGiocatriceInfortunataPerPartita(matchInfo.data_ora, giocatriceDaControllare)) {
+            infortunateList.push(giocatriceDaControllare);
+        } else {
+            const registro = presenze.find(p => p.giocatrice_id === g.id);
+            if (registro && registro.presente === true) {
+                presentiList.push(g);
+                conteggioRuoli[g.ruolo] = (conteggioRuoli[g.ruolo] || 0) + 1;
+            } else if (registro && registro.presente === false) {
+                assentiList.push(g);
+            }
         }
     });
 
@@ -585,6 +930,20 @@ window.caricaDettaglioPartita = async function (matchId) {
                 <span class="text-xs bg-emerald-200 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-md font-medium">${g.ruolo}</span>
             </div>
         `).join('');
+    }
+
+    if (sezioneInfortunateWrapper && divInfortunate) {
+        if (infortunateList.length === 0) {
+            sezioneInfortunateWrapper.style.display = 'none';
+        } else {
+            sezioneInfortunateWrapper.style.display = 'block';
+            divInfortunate.innerHTML = infortunateList.map(g => `
+                <div class="flex justify-between items-center bg-amber-50 dark:bg-amber-950/30 px-3 py-2 rounded-xl border border-amber-100 dark:border-amber-900/40">
+                    <span class="font-semibold text-slate-700 dark:text-slate-200">${g.nome} ${g.cognome}</span>
+                    <span class="text-xs bg-amber-200 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-md font-medium">Infortunata</span>
+                </div>
+            `).join('');
+        }
     }
 
     if (assentiList.length === 0) {
@@ -640,6 +999,13 @@ window.caricaDettaglioPartita = async function (matchId) {
 
 window.openPresenceModal = function (matchId, avversario) {
     if (!currentUser) return;
+
+    const match = cachePartiteGlobali.find(m => m.id === matchId);
+    if (match && isGiocatriceInfortunataPerPartita(match.data_ora, currentUser)) {
+        alert("Risulti infortunata per questa partita, non è possibile modificare la presenza.");
+        return;
+    }
+
     activeMatchIdForPresence = matchId;
     document.getElementById('modalMatchTitle').textContent = `vs ${avversario}`;
     document.getElementById('modalMatchInfo').textContent = `Conferma per: ${currentUser.nome} ${currentUser.cognome} (${currentUser.ruolo})`;
