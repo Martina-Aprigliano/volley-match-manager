@@ -182,8 +182,14 @@
                         <input type="hidden" id="matchId">
                         <input type="text" id="avversario" placeholder="Squadra Avversaria" required
                             class="w-full p-3 border dark:border-slate-600 rounded-xl text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                        <input type="datetime-local" id="dataOra" required
-                            class="w-full p-3 border dark:border-slate-600 rounded-xl text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 box-border max-w-full">
+
+                        <!-- Campo Data/Ora racchiuso in un contenitore sicuro per evitare sbordamenti su mobile -->
+                        <div class="w-full overflow-hidden">
+                            <input type="datetime-local" id="dataOra" required
+                                class="w-full p-3 border dark:border-slate-600 rounded-xl text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 box-border"
+                                style="max-width: 100%;">
+                        </div>
+
                         <select id="luogo"
                             class="w-full p-3 border dark:border-slate-600 rounded-xl text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
                             <option value="Casa">Casa</option>
