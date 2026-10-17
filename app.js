@@ -239,9 +239,9 @@ async function fetchMatches() {
             if (p) miaPresenza = p.presente;
         }
 
-        let badgeStatus = '<span class="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full font-medium">Non risposto</span>';
-        if (miaPresenza === true) badgeStatus = '<span class="text-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-medium">&#9989; Ci sono</span>';
-        if (miaPresenza === false) badgeStatus = '<span class="text-xs text-rose-600 bg-rose-50 px-2 py-0.5 rounded-full font-medium">&#10060; Assente</span>';
+        let badgeStatus = '<span class="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-full font-medium">Non risposto</span>';
+        if (miaPresenza === true) badgeStatus = '<span class="text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-full font-medium">Ci sono</span>';
+        if (miaPresenza === false) badgeStatus = '<span class="text-xs text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-1 rounded-full font-medium">Assente</span>';
 
         const card = document.createElement('div');
         card.className = "bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 flex flex-col space-y-3 transition-colors";
@@ -254,8 +254,14 @@ async function fetchMatches() {
                     <div class="mt-2">${badgeStatus}</div>
                 </div>
                 <div class="flex space-x-1 items-center">
-                    <button type="button" onclick='editMatch(${JSON.stringify(match).replace(/'/g, "&#39;")})' class="p-2 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 text-sm cursor-pointer" title="Modifica">&#9999;&#65039;</button>
-                    <button type="button" onclick="deleteMatch('${match.id}')" class="p-2 text-slate-400 hover:text-rose-500 text-sm cursor-pointer" title="Elimina">&#128465;&#65039;</button>
+                    <!-- Icona Vettoriale Matita (Modifica) -->
+                    <button type="button" onclick='editMatch(${JSON.stringify(match).replace(/'/g, "&#39;")})' class="p-2 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition cursor-pointer" title="Modifica">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                    </button>
+                    <!-- Icona Vettoriale Cestino (Elimina) -->
+                    <button type="button" onclick="deleteMatch('${match.id}')" class="p-2 text-slate-400 hover:text-rose-500 transition cursor-pointer" title="Elimina">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                    </button>
                 </div>
             </div>
         `;
@@ -315,7 +321,7 @@ window.caricaDettaglioPartita = async function (matchId) {
         return;
     }
 
-    titolo.textContent = `Partita vs ${matchInfo.avversario}`;
+    titolo.textContent = `Partita vs ${matchInfo.avversario} `;
 
     let presentiList = [];
     let assentiList = [];
@@ -337,10 +343,10 @@ window.caricaDettaglioPartita = async function (matchId) {
         divPresenti.innerHTML = '<p class="text-xs text-slate-400 italic">Nessuna presenza confermata.</p>';
     } else {
         divPresenti.innerHTML = presentiList.map(g => `
-            <div class="flex justify-between items-center bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2 rounded-xl border border-emerald-100 dark:border-emerald-900/40">
+        < div class="flex justify-between items-center bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2 rounded-xl border border-emerald-100 dark:border-emerald-900/40" >
                 <span class="font-semibold text-slate-700 dark:text-slate-200">${g.nome} ${g.cognome}</span>
                 <span class="text-xs bg-emerald-200 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 px-2 py-0.5 rounded-md font-medium">${g.ruolo}</span>
-            </div>
+            </div >
         `).join('');
     }
 
@@ -349,10 +355,10 @@ window.caricaDettaglioPartita = async function (matchId) {
         divAssenti.innerHTML = '<p class="text-xs text-slate-400 italic">Nessun\'assenza registrata.</p>';
     } else {
         divAssenti.innerHTML = assentiList.map(g => `
-            <div class="flex justify-between items-center bg-rose-50 dark:bg-rose-950/30 px-3 py-2 rounded-xl border border-rose-100 dark:border-rose-900/40">
+        < div class="flex justify-between items-center bg-rose-50 dark:bg-rose-950/30 px-3 py-2 rounded-xl border border-rose-100 dark:border-rose-900/40" >
                 <span class="font-semibold text-slate-700 dark:text-slate-200">${g.nome} ${g.cognome}</span>
                 <span class="text-xs bg-rose-200 dark:bg-rose-900/60 text-rose-800 dark:text-rose-300 px-2 py-0.5 rounded-md font-medium">${g.ruolo}</span>
-            </div>
+            </div >
         `).join('');
     }
 
@@ -361,10 +367,10 @@ window.caricaDettaglioPartita = async function (matchId) {
     divRuoli.innerHTML = ruoliFissi.map(r => {
         const quanti = conteggioRuoli[r] || 0;
         return `
-            <div class="bg-indigo-800/60 dark:bg-indigo-900/60 p-2.5 rounded-xl flex justify-between items-center border border-indigo-700/60">
+        < div class="bg-indigo-800/60 dark:bg-indigo-900/60 p-2.5 rounded-xl flex justify-between items-center border border-indigo-700/60" >
                 <span class="text-xs text-indigo-200">${r}</span>
                 <span class="font-bold text-base text-white">${quanti}</span>
-            </div>
+            </div >
         `;
     }).join('');
 };
@@ -372,7 +378,7 @@ window.caricaDettaglioPartita = async function (matchId) {
 window.openPresenceModal = function (matchId, avversario) {
     if (!currentUser) return;
     activeMatchIdForPresence = matchId;
-    document.getElementById('modalMatchTitle').textContent = `vs ${avversario}`;
+    document.getElementById('modalMatchTitle').textContent = `vs ${avversario} `;
     document.getElementById('modalMatchInfo').textContent = `Conferma per: ${currentUser.nome} ${currentUser.cognome} (${currentUser.ruolo})`;
     document.getElementById('presenceModal').classList.remove('hidden');
 };
