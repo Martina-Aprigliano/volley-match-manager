@@ -1,4 +1,4 @@
-const CACHE_NAME = 'volley-app-v1';
+const CACHE_NAME = 'volley-app-v2';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -15,8 +15,9 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// NON intercettiamo mai le chiamate a Supabase o i salvataggi (POST/PATCH/DELETE)
 self.addEventListener('fetch', (event) => {
-  event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request))
-  );
+  if (event.request.method !== 'GET' || event.request.url.includes('supabase.co')) {
+    return;
+  }
 });

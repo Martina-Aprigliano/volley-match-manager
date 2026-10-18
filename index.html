@@ -259,7 +259,7 @@
                             </div>
 
                             <div class="flex space-x-3 pt-2">
-                                <button type="submit"
+                                <button type="submit" id="btnSalvaMatch"
                                     class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-medium p-3 rounded-xl transition cursor-pointer">Salva</button>
                                 <button type="button" onclick="toggleMatchForm()"
                                     class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-5 rounded-xl transition cursor-pointer">Annulla</button>
@@ -338,11 +338,11 @@
     <div id="profileModal"
         class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
         <div
-            class="bg-slate-900 border border-slate-700 w-full max-w-md p-6 rounded-2xl shadow-2xl space-y-4 text-white">
-            <div class="flex justify-between items-center border-b border-slate-800 pb-3">
-                <h2 class="font-bold text-lg text-white">Modifica Profilo</h2>
+            class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 w-full max-w-md p-6 rounded-2xl shadow-2xl space-y-4 text-slate-800 dark:text-white overflow-hidden transition-colors duration-200">
+            <div class="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-3">
+                <h2 class="font-bold text-lg text-slate-900 dark:text-white">Modifica Profilo</h2>
                 <button type="button" onclick="closeProfileModal()"
-                    class="text-slate-400 hover:text-white p-1 cursor-pointer">
+                    class="text-slate-400 hover:text-slate-700 dark:hover:text-white p-1 cursor-pointer">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
                     </svg>
@@ -351,15 +351,16 @@
 
             <div class="space-y-4">
                 <div>
-                    <label class="block text-xs font-medium text-slate-400 mb-1">Nome e Cognome</label>
+                    <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Nome e
+                        Cognome</label>
                     <input type="text" id="editProfileNomeCognome" disabled
-                        class="w-full p-3 border border-slate-800 rounded-xl text-sm bg-slate-800/60 text-slate-400 cursor-not-allowed">
+                        class="w-full p-3 border border-slate-200 dark:border-slate-800 rounded-xl text-sm bg-slate-100 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 cursor-not-allowed">
                 </div>
 
                 <div>
-                    <label class="block text-xs font-medium text-slate-400 mb-1">Ruolo</label>
+                    <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Ruolo</label>
                     <select id="editProfileRuolo"
-                        class="w-full p-3 border border-slate-700 rounded-xl text-sm bg-slate-800 text-white focus:outline-none focus:border-indigo-500">
+                        class="w-full p-3 border border-slate-200 dark:border-slate-700 rounded-xl text-sm bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
                         <option value="Palleggiatrice">Palleggiatrice</option>
                         <option value="Opposto">Opposto</option>
                         <option value="Centro">Centro</option>
@@ -369,49 +370,55 @@
                 </div>
 
                 <div>
-                    <label class="block text-xs font-medium text-slate-400 mb-1">Data di Nascita (Facoltativa)</label>
+                    <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Data di Nascita
+                        (Facoltativa)</label>
                     <input type="text" id="editProfileAnno" placeholder="Es. 15/05/2002"
-                        class="w-full p-3 border border-slate-700 rounded-xl text-sm bg-slate-800 text-white focus:outline-none focus:border-indigo-500">
+                        class="w-full p-3 border border-slate-200 dark:border-slate-700 rounded-xl text-sm bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
                 </div>
 
                 <!-- BLOCCO INFORTUNIO CON INTERRUTTORE (TOGGLE) -->
-                <div class="bg-slate-800/80 p-4 rounded-xl border border-slate-700 space-y-3">
+                <div
+                    class="bg-slate-50 dark:bg-slate-800/80 p-4 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3 overflow-hidden">
                     <div class="flex justify-between items-center">
                         <div>
-                            <span class="block text-sm font-bold text-white">Infortunio</span>
-                            <span class="text-xs text-slate-400">Attiva se sei attualmente infortunata</span>
+                            <span class="block text-sm font-bold text-slate-900 dark:text-white">Infortunio</span>
+                            <span class="text-xs text-slate-500 dark:text-slate-400">Attiva se sei attualmente
+                                infortunata</span>
                         </div>
-                        <label class="relative inline-flex items-center cursor-pointer">
+                        <label class="relative inline-flex items-center cursor-pointer shrink-0">
                             <input type="checkbox" id="editInfortunioToggle"
                                 onchange="gestisciCambioToggleInfortunio(this.checked)" class="sr-only peer">
                             <div
-                                class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500">
+                                class="w-11 h-6 bg-slate-300 dark:bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500">
                             </div>
                         </label>
                     </div>
 
+                    <!-- Campi Data -->
                     <div id="containerDateInfortunio"
-                        class="space-y-3 pt-2 border-t border-slate-700/60 opacity-40 pointer-events-none transition-opacity">
-                        <div>
-                            <label class="block text-xs font-medium text-slate-400 mb-1">Data Inizio Infortunio</label>
+                        class="space-y-3 pt-2 border-t border-slate-200 dark:border-slate-700/60 opacity-40 pointer-events-none transition-opacity overflow-hidden">
+                        <div class="w-full overflow-hidden">
+                            <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Data Inizio
+                                Infortunio</label>
                             <input type="date" id="editDataInizio"
-                                class="w-full p-2.5 border border-slate-700 rounded-xl text-xs bg-slate-800 text-white focus:outline-none focus:border-indigo-500">
+                                class="block w-full min-w-0 max-w-full h-[42px] px-3 border border-slate-200 dark:border-slate-700 rounded-xl text-xs bg-white dark:bg-slate-800 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 box-border appearance-none">
                         </div>
-                        <div>
-                            <label class="block text-xs font-medium text-slate-400 mb-1">Data Rientro (Fine) — <span
-                                    class="text-slate-400 font-normal">Opzionale (se vuoto = in corso)</span></label>
+                        <div class="w-full overflow-hidden">
+                            <label class="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Data
+                                Rientro (Fine) — <span class="text-slate-400 font-normal">Opzionale (se vuoto = in
+                                    corso)</span></label>
                             <input type="date" id="editDataFine"
-                                class="w-full p-2.5 border border-slate-700 rounded-xl text-xs bg-slate-800 text-white focus:outline-none focus:border-indigo-500">
+                                class="block w-full min-w-0 max-w-full h-[42px] px-3 border border-slate-200 dark:border-slate-700 rounded-xl text-xs bg-white dark:bg-slate-800 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 box-border appearance-none">
                         </div>
                     </div>
                 </div>
 
                 <div class="flex space-x-3 pt-2">
-                    <button type="button" onclick="salvaProfilo()"
+                    <button type="button" id="btnSalvaProfilo" onclick="salvaProfilo()"
                         class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-medium p-3 rounded-xl transition cursor-pointer">Salva
                         Modifiche</button>
                     <button type="button" onclick="closeProfileModal()"
-                        class="bg-slate-800 hover:bg-slate-700 text-slate-300 px-5 rounded-xl transition cursor-pointer">Annulla</button>
+                        class="bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 px-5 rounded-xl transition cursor-pointer">Annulla</button>
                 </div>
             </div>
         </div>
@@ -468,7 +475,7 @@
         </div>
     </div>
 
-    <script src="app.js?v=style12"></script>
+    <script src="app.js?v=style13"></script>
 </body>
 
 </html>

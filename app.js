@@ -1,6 +1,8 @@
 const SUPABASE_URL = 'https://ydklibjdzcwennwrblwi.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_2_PrY5UOPkEPJfucET16DA_i_zSx2Bx';
-const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false }
+});
 
 const STORAGE_KEY = "volley_user_v1";
 let currentUser = JSON.parse(localStorage.getItem(STORAGE_KEY)) || null;
@@ -9,8 +11,36 @@ let cachePartiteGlobali = [];
 let mostraSoloArchivio = false;
 let controlloScadenzaInCorso = false;
 
+// Semafori anti-doppio click per evitare loop di salvataggi e alert multipli
+let salvataggioProfiloInCorso = false;
+let salvataggioPartitaInCorso = false;
+let salvataggioPresenzaInCorso = false;
+
 // Indirizzo fisso della palestra di casa
 const INDIRIZZO_CASA = "Oratorio Don Bosco Carugate, Via Papa Pio XI, 36, 20061 Carugate MI";
+
+// Funzione universale anti "TypeError: Load failed" per Safari/iOS:
+// se la connessione socket di iOS si è addormentata, riprova automaticamente
+async function eseguiQueryConRetry(fnQuery, tentativi = 2) {
+    for (let i = 0; i < tentativi; i++) {
+        try {
+            const res = await fnQuery();
+            if (res && res.error && (res.error.message?.includes('Load failed') || res.error.message?.includes('Failed to fetch'))) {
+                if (i < tentativi - 1) {
+                    await new Promise(r => setTimeout(r, 400));
+                    continue;
+                }
+            }
+            return res;
+        } catch (err) {
+            if (i < tentativi - 1) {
+                await new Promise(r => setTimeout(r, 400));
+                continue;
+            }
+            return { data: null, error: err };
+        }
+    }
+}
 
 document.addEventListener('DOMContentLoaded', () => {
     aggiornaInterfaccia();
@@ -20,6 +50,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (matchForm) {
         matchForm.addEventListener('submit', async (e) => {
             e.preventDefault();
+            if (salvataggioPartitaInCorso) return;
+
             const id = document.getElementById('matchId').value;
             const avversario = document.getElementById('avversario').value.trim();
             const dataOra = document.getElementById('dataOra').value;
@@ -31,22 +63,35 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            let error;
-            if (id) {
-                const res = await db.from('partite').update({ avversario, data_ora: dataOra, luogo, indirizzo }).eq('id', id);
-                error = res.error;
-            } else {
-                const res = await db.from('partite').insert([{ avversario, data_ora: dataOra, luogo, indirizzo }]);
-                error = res.error;
+            salvataggioPartitaInCorso = true;
+            const btnSubmit = document.getElementById('btnSalvaMatch');
+            if (btnSubmit) {
+                btnSubmit.disabled = true;
+                btnSubmit.textContent = 'Salvataggio...';
             }
 
-            if (error) {
-                alert('Errore nel salvataggio: ' + error.message);
-            } else {
-                matchForm.reset();
-                document.getElementById('matchId').value = '';
-                window.toggleMatchForm(false);
-                fetchMatches();
+            try {
+                let res;
+                if (id) {
+                    res = await eseguiQueryConRetry(() => db.from('partite').update({ avversario, data_ora: dataOra, luogo, indirizzo }).eq('id', id));
+                } else {
+                    res = await eseguiQueryConRetry(() => db.from('partite').insert([{ avversario, data_ora: dataOra, luogo, indirizzo }]));
+                }
+
+                if (res && res.error) {
+                    alert('Errore di rete durante il salvataggio. Riprova tra un istante.');
+                } else {
+                    matchForm.reset();
+                    document.getElementById('matchId').value = '';
+                    window.toggleMatchForm(false);
+                    fetchMatches();
+                }
+            } finally {
+                salvataggioPartitaInCorso = false;
+                if (btnSubmit) {
+                    btnSubmit.disabled = false;
+                    btnSubmit.textContent = 'Salva';
+                }
             }
         });
     }
@@ -55,19 +100,22 @@ document.addEventListener('DOMContentLoaded', () => {
 async function inserisciInfortunioStoricoSicuro(giocatriceId, dataInizio, dataFine) {
     if (!giocatriceId || !dataInizio || !dataFine) return;
 
-    const { data: esistenti } = await db
-        .from('infortuni')
-        .select('id')
-        .eq('giocatrice_id', giocatriceId)
-        .eq('data_inizio', dataInizio)
-        .eq('data_fine', dataFine);
+    const { data: esistenti } = await eseguiQueryConRetry(() =>
+        db.from('infortuni')
+            .select('id')
+            .eq('giocatrice_id', giocatriceId)
+            .eq('data_inizio', dataInizio)
+            .eq('data_fine', dataFine)
+    );
 
     if (!esistenti || esistenti.length === 0) {
-        await db.from('infortuni').insert([{
-            giocatrice_id: giocatriceId,
-            data_inizio: dataInizio,
-            data_fine: dataFine
-        }]);
+        await eseguiQueryConRetry(() =>
+            db.from('infortuni').insert([{
+                giocatrice_id: giocatriceId,
+                data_inizio: dataInizio,
+                data_fine: dataFine
+            }])
+        );
     }
 }
 
@@ -98,7 +146,7 @@ async function controllaScadenzaInfortunio() {
                     data_fine_infortunio: null
                 };
 
-                await db.from('giocatrici').update(datiReset).eq('id', currentUser.id);
+                await eseguiQueryConRetry(() => db.from('giocatrici').update(datiReset).eq('id', currentUser.id));
 
                 if (inizioDaArchiviare) {
                     await inserisciInfortunioStoricoSicuro(currentUser.id, inizioDaArchiviare, fineDaArchiviare);
@@ -191,7 +239,7 @@ window.confermaRientro = function (confermato) {
 };
 
 window.salvaProfilo = async function () {
-    if (!currentUser) return;
+    if (!currentUser || salvataggioProfiloInCorso) return;
 
     const nuovoRuolo = document.getElementById('editProfileRuolo').value;
     const nuovoAnno = document.getElementById('editProfileAnno').value.trim();
@@ -209,57 +257,74 @@ window.salvaProfilo = async function () {
         return;
     }
 
-    const eraInfortunata = currentUser.infortunata;
-    const inizioPrecedente = currentUser.data_inizio_infortunio;
-    const oggiStr = new Date().toISOString().split('T')[0];
-
-    let statoInfortunataFinale = infortunata;
-    let dataInizioFinale = infortunata ? dataInizioVal : null;
-    let dataFineFinale = (infortunata && dataFineVal !== "") ? dataFineVal : null;
-
-    if (eraInfortunata && !infortunata) {
-        const dataInizioStorico = inizioPrecedente || dataInizioVal;
-        const dataFineStorico = dataFineVal !== "" ? dataFineVal : oggiStr;
-
-        if (dataInizioStorico) {
-            await inserisciInfortunioStoricoSicuro(currentUser.id, dataInizioStorico, dataFineStorico);
-        }
-        statoInfortunataFinale = false;
-        dataInizioFinale = null;
-        dataFineFinale = null;
-    } else if (infortunata && dataFineVal !== "" && dataFineVal < oggiStr) {
-        await inserisciInfortunioStoricoSicuro(currentUser.id, dataInizioVal, dataFineVal);
-        statoInfortunataFinale = false;
-        dataInizioFinale = null;
-        dataFineFinale = null;
+    salvataggioProfiloInCorso = true;
+    const btnSalva = document.getElementById('btnSalvaProfilo');
+    if (btnSalva) {
+        btnSalva.disabled = true;
+        btnSalva.textContent = 'Salvataggio...';
     }
 
-    const datiAggiornati = {
-        ruolo: nuovoRuolo,
-        anno_nascita: nuovoAnno !== "" ? nuovoAnno : null,
-        infortunata: statoInfortunataFinale,
-        data_inizio_infortunio: dataInizioFinale,
-        data_fine_infortunio: dataFineFinale
-    };
+    try {
+        const eraInfortunata = currentUser.infortunata;
+        const inizioPrecedente = currentUser.data_inizio_infortunio;
+        const oggiStr = new Date().toISOString().split('T')[0];
 
-    const { data, error } = await db.from('giocatrici').update(datiAggiornati).eq('id', currentUser.id).select();
+        let statoInfortunataFinale = infortunata;
+        let dataInizioFinale = infortunata ? dataInizioVal : null;
+        let dataFineFinale = (infortunata && dataFineVal !== "") ? dataFineVal : null;
 
-    if (error) {
-        alert('Errore nel salvataggio del profilo: ' + error.message);
-    } else {
-        if (data && data.length > 0) {
-            currentUser = data[0];
-        } else {
-            currentUser.ruolo = nuovoRuolo;
-            currentUser.anno_nascita = datiAggiornati.anno_nascita;
-            currentUser.infortunata = datiAggiornati.infortunata;
-            currentUser.data_inizio_infortunio = datiAggiornati.data_inizio_infortunio;
-            currentUser.data_fine_infortunio = datiAggiornati.data_fine_infortunio;
+        if (eraInfortunata && !infortunata) {
+            const dataInizioStorico = inizioPrecedente || dataInizioVal;
+            const dataFineStorico = dataFineVal !== "" ? dataFineVal : oggiStr;
+
+            if (dataInizioStorico) {
+                await inserisciInfortunioStoricoSicuro(currentUser.id, dataInizioStorico, dataFineStorico);
+            }
+            statoInfortunataFinale = false;
+            dataInizioFinale = null;
+            dataFineFinale = null;
+        } else if (infortunata && dataFineVal !== "" && dataFineVal < oggiStr) {
+            await inserisciInfortunioStoricoSicuro(currentUser.id, dataInizioVal, dataFineVal);
+            statoInfortunataFinale = false;
+            dataInizioFinale = null;
+            dataFineFinale = null;
         }
 
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUser));
-        closeProfileModal();
-        aggiornaInterfaccia();
+        const datiAggiornati = {
+            ruolo: nuovoRuolo,
+            anno_nascita: nuovoAnno !== "" ? nuovoAnno : null,
+            infortunata: statoInfortunataFinale,
+            data_inizio_infortunio: dataInizioFinale,
+            data_fine_infortunio: dataFineFinale
+        };
+
+        const { data, error } = await eseguiQueryConRetry(() =>
+            db.from('giocatrici').update(datiAggiornati).eq('id', currentUser.id).select()
+        );
+
+        if (error) {
+            alert('Connessione instabile, impossibile salvare al momento. Riprova.');
+        } else {
+            if (data && data.length > 0) {
+                currentUser = data[0];
+            } else {
+                currentUser.ruolo = nuovoRuolo;
+                currentUser.anno_nascita = datiAggiornati.anno_nascita;
+                currentUser.infortunata = datiAggiornati.infortunata;
+                currentUser.data_inizio_infortunio = datiAggiornati.data_inizio_infortunio;
+                currentUser.data_fine_infortunio = datiAggiornati.data_fine_infortunio;
+            }
+
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUser));
+            closeProfileModal();
+            aggiornaInterfaccia();
+        }
+    } finally {
+        salvataggioProfiloInCorso = false;
+        if (btnSalva) {
+            btnSalva.disabled = false;
+            btnSalva.textContent = 'Salva Modifiche';
+        }
     }
 };
 
@@ -337,11 +402,12 @@ async function caricaStoricoInfortuni() {
 
     await controllaScadenzaInfortunio();
 
-    const { data, error } = await db
-        .from('infortuni')
-        .select('*')
-        .eq('giocatrice_id', currentUser.id)
-        .order('data_inizio', { ascending: false });
+    const { data, error } = await eseguiQueryConRetry(() =>
+        db.from('infortuni')
+            .select('*')
+            .eq('giocatrice_id', currentUser.id)
+            .order('data_inizio', { ascending: false })
+    );
 
     if (error) {
         container.innerHTML = '<p class="text-xs text-rose-500 text-center py-4">Errore nel caricamento dello storico.</p>';
@@ -483,7 +549,7 @@ window.rimuoviFiltriArchivio = function () {
 };
 
 async function testaConnessioneGiocatrici() {
-    const { data, error } = await db.from('giocatrici').select('*');
+    const { error } = await eseguiQueryConRetry(() => db.from('giocatrici').select('id').limit(1));
     if (error) console.error("Errore di connessione a Supabase:", error);
 }
 
@@ -502,11 +568,12 @@ window.eseguiLogin = async function () {
     }
 
     try {
-        const { data, error } = await db
-            .from('giocatrici')
-            .select('*')
-            .ilike('nome', nomeVal)
-            .ilike('cognome', cognomeVal);
+        const { data, error } = await eseguiQueryConRetry(() =>
+            db.from('giocatrici')
+                .select('*')
+                .ilike('nome', nomeVal)
+                .ilike('cognome', cognomeVal)
+        );
 
         if (error || !data || data.length === 0) {
             alert('Giocatrice non trovata nel database della squadra.');
@@ -620,7 +687,7 @@ window.editMatch = function (match) {
 
 window.deleteMatch = async function (id) {
     if (confirm('Vuoi eliminare questa partita?')) {
-        const { error } = await db.from('partite').delete().eq('id', id);
+        const { error } = await eseguiQueryConRetry(() => db.from('partite').delete().eq('id', id));
         if (!error) fetchMatches();
     }
 };
@@ -630,10 +697,11 @@ async function fetchMatches() {
         await controllaScadenzaInfortunio();
     }
 
-    const { data, error } = await db
-        .from('partite')
-        .select(`*, presenze(giocatrice_id, presente)`)
-        .order('data_ora', { ascending: true });
+    const { data, error } = await eseguiQueryConRetry(() =>
+        db.from('partite')
+            .select(`*, presenze(giocatrice_id, presente)`)
+            .order('data_ora', { ascending: true })
+    );
 
     if (error) {
         console.error('Errore caricamento partite:', error);
@@ -747,7 +815,6 @@ function creaCardElement(match, isArchivio = false, isInEvidenza = false) {
     if (isInEvidenza) {
         card.className = "bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-md border-2 border-indigo-500 flex flex-col space-y-3 transition-colors";
     } else if (isArchivio) {
-        // Ripristinato lo sfondo grigino/differenziato per le partite passate
         card.className = "bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col space-y-3 transition-colors cursor-pointer hover:border-indigo-500";
     } else {
         card.className = "bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 flex flex-col space-y-3 transition-colors";
@@ -885,8 +952,8 @@ window.caricaDettaglioPartita = async function (matchId) {
     divAssenti.innerHTML = '<p class="text-xs text-slate-400">Caricamento...</p>';
     divRuoli.innerHTML = '';
 
-    const { data: giocatrici, error: errG } = await db.from('giocatrici').select('*');
-    const { data: presenze, error: errP } = await db.from('presenze').select('*').eq('match_id', matchId);
+    const { data: giocatrici, error: errG } = await eseguiQueryConRetry(() => db.from('giocatrici').select('*'));
+    const { data: presenze, error: errP } = await eseguiQueryConRetry(() => db.from('presenze').select('*').eq('match_id', matchId));
 
     const matchInfo = cachePartiteGlobali.find(m => m.id === matchId);
 
@@ -1018,18 +1085,25 @@ window.closePresenceModal = function () {
 };
 
 window.updatePresence = async function (presente) {
-    if (!currentUser || !activeMatchIdForPresence) return;
+    if (!currentUser || !activeMatchIdForPresence || salvataggioPresenzaInCorso) return;
 
-    const { error } = await db.from('presenze').upsert({
-        match_id: activeMatchIdForPresence,
-        giocatrice_id: currentUser.id,
-        presente: presente
-    }, { onConflict: 'match_id,giocatrice_id' });
+    salvataggioPresenzaInCorso = true;
+    try {
+        const { error } = await eseguiQueryConRetry(() =>
+            db.from('presenze').upsert({
+                match_id: activeMatchIdForPresence,
+                giocatrice_id: currentUser.id,
+                presente: presente
+            }, { onConflict: 'match_id,giocatrice_id' })
+        );
 
-    if (error) {
-        alert('Errore nel salvataggio: ' + error.message);
-    } else {
-        window.closePresenceModal();
-        fetchMatches();
+        if (error) {
+            alert('Connessione instabile, impossibile salvare la presenza. Riprova.');
+        } else {
+            window.closePresenceModal();
+            fetchMatches();
+        }
+    } finally {
+        salvataggioPresenzaInCorso = false;
     }
 };
