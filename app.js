@@ -210,12 +210,13 @@ window.toggleInfortunioFields = function (attivo) {
 
     if (attivo) {
         container.classList.remove('opacity-40', 'pointer-events-none');
+        // Imposta la data odierna nel formato standard corretto per l'input type="date" (YYYY-MM-DD)
         if (!dataInizio.value) {
             const oggi = new Date();
-            const gg = String(oggi.getDate()).padStart(2, '0');
+            const yyyy = oggi.getFullYear();
             const mm = String(oggi.getMonth() + 1).padStart(2, '0');
-            const aaaa = oggi.getFullYear();
-            dataInizio.value = `${gg}/${mm}/${aaaa}`;
+            const dd = String(oggi.getDate()).padStart(2, '0');
+            dataInizio.value = `${yyyy}-${mm}-${dd}`;
         }
     } else {
         container.classList.add('opacity-40', 'pointer-events-none');
@@ -223,9 +224,12 @@ window.toggleInfortunioFields = function (attivo) {
 };
 
 window.gestisciCambioToggleInfortunio = function (nuovoStato) {
-    const eraInfortunata = currentUser && currentUser.infortunata;
+    // Se spengi il toggle, mostriamo sempre il modale di conferma per il rientro
+    if (!nuovoStato) {
+        const toggle = document.getElementById('editInfortunioToggle');
+        // Rimettiamo temporaneamente il toggle su true finché non conferma
+        if (toggle) toggle.checked = true;
 
-    if (eraInfortunata && !nuovoStato) {
         const testoModale = document.getElementById('confirmRientroText');
         const dataFineInserita = document.getElementById('editDataFine').value || currentUser.data_fine_infortunio;
 
@@ -238,7 +242,8 @@ window.gestisciCambioToggleInfortunio = function (nuovoStato) {
         }
         document.getElementById('confirmRientroModal').classList.remove('hidden');
     } else {
-        toggleInfortunioFields(nuovoStato);
+        // Se lo stai attivando, abilitiamo i campi e impostiamo la data di oggi
+        toggleInfortunioFields(true);
     }
 };
 
