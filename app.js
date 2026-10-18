@@ -1061,7 +1061,8 @@ function creaCardElement(match, isArchivio = false, isInEvidenza = false) {
         : `openPresenceModal('${match.id}', '${match.avversario.replace(/'/g, "\\'")}')`;
 
     let mappaHtml = '';
-    if (match.indirizzo && match.indirizzo.trim() !== '') {
+    // Mostra la mappa SOLO se la partita NON è nell'archivio
+    if (!isArchivio && match.indirizzo && match.indirizzo.trim() !== '') {
         const encodedAddress = encodeURIComponent(match.indirizzo);
         const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
 
