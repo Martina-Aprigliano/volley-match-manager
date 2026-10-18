@@ -11,16 +11,12 @@ let cachePartiteGlobali = [];
 let mostraSoloArchivio = false;
 let controlloScadenzaInCorso = false;
 
-// Semafori anti-doppio click per evitare loop di salvataggi e alert multipli
 let salvataggioProfiloInCorso = false;
 let salvataggioPartitaInCorso = false;
 let salvataggioPresenzaInCorso = false;
 
-// Indirizzo fisso della palestra di casa
 const INDIRIZZO_CASA = "Oratorio Don Bosco Carugate, Via Papa Pio XI, 36, 20061 Carugate MI";
 
-// Funzione universale anti "TypeError: Load failed" per Safari/iOS:
-// se la connessione socket di iOS si è addormentata, riprova automaticamente
 async function eseguiQueryConRetry(fnQuery, tentativi = 2) {
     for (let i = 0; i < tentativi; i++) {
         try {
@@ -119,9 +115,8 @@ async function inserisciInfortunioStoricoSicuro(giocatriceId, dataInizio, dataFi
     }
 }
 
-// --- VERIFICA SCADENZA AUTOMATICA INFORTUNIO ---
 async function controllaScadenzaInfortunio() {
-    if (!currentUser || !currentUser.infortunata || controlloScadenzaInCorso) return;
+    if (!currentUser || currentUser.isStaff || !currentUser.infortunata || controlloScadenzaInCorso) return;
 
     controlloScadenzaInCorso = true;
     try {
@@ -160,30 +155,53 @@ async function controllaScadenzaInfortunio() {
     }
 }
 
-// --- GESTIONE MODALE PROFILO E INFORTUNIO ---
+window.applicaFormatoData = function (input) {
+    let v = input.value.replace(/\D/g, '');
+    if (v.length > 8) v = v.slice(0, 8);
+
+    if (v.length >= 5) {
+        input.value = `${v.slice(0, 2)}/${v.slice(2, 4)}/${v.slice(4)}`;
+    } else if (v.length >= 3) {
+        input.value = `${v.slice(0, 2)}/${v.slice(2)}`;
+    } else {
+        input.value = v;
+    }
+};
+
 window.openProfileModal = function () {
     if (!currentUser) return;
     toggleSidebar(false);
 
-    document.getElementById('editProfileNomeCognome').value = `${currentUser.nome} ${currentUser.cognome}`;
-    document.getElementById('editProfileRuolo').value = currentUser.ruolo || 'Palleggiatrice';
-    document.getElementById('editProfileAnno').value = currentUser.anno_nascita || '';
+    if (currentUser.isStaff) {
+        document.getElementById('editStaffNomeCognome').value = `${currentUser.nome} ${currentUser.cognome}`;
+        document.getElementById('editStaffRuolo').value = currentUser.ruolo || 'Allenatore';
+        document.getElementById('editStaffAnno').value = currentUser.anno_nascita || '';
+        document.getElementById('profileStaffModal').classList.remove('hidden');
+    } else {
+        document.getElementById('editProfileNomeCognome').value = `${currentUser.nome} ${currentUser.cognome}`;
+        document.getElementById('editProfileRuolo').value = currentUser.ruolo || 'Palleggiatrice';
+        document.getElementById('editProfileAnno').value = currentUser.anno_nascita || '';
 
-    const toggle = document.getElementById('editInfortunioToggle');
-    const dataInizio = document.getElementById('editDataInizio');
-    const dataFine = document.getElementById('editDataFine');
+        const toggle = document.getElementById('editInfortunioToggle');
+        const dataInizio = document.getElementById('editDataInizio');
+        const dataFine = document.getElementById('editDataFine');
 
-    toggle.checked = !!currentUser.infortunata;
-    dataInizio.value = currentUser.data_inizio_infortunio || '';
-    dataFine.value = currentUser.data_fine_infortunio || '';
+        toggle.checked = !!currentUser.infortunata;
+        dataInizio.value = currentUser.data_inizio_infortunio || '';
+        dataFine.value = currentUser.data_fine_infortunio || '';
 
-    toggleInfortunioFields(toggle.checked);
+        toggleInfortunioFields(toggle.checked);
 
-    document.getElementById('profileModal').classList.remove('hidden');
+        document.getElementById('profileModal').classList.remove('hidden');
+    }
 };
 
 window.closeProfileModal = function () {
     document.getElementById('profileModal').classList.add('hidden');
+};
+
+window.closeProfileStaffModal = function () {
+    document.getElementById('profileStaffModal').classList.add('hidden');
 };
 
 window.toggleInfortunioFields = function (attivo) {
@@ -193,8 +211,11 @@ window.toggleInfortunioFields = function (attivo) {
     if (attivo) {
         container.classList.remove('opacity-40', 'pointer-events-none');
         if (!dataInizio.value) {
-            const oggi = new Date().toISOString().split('T')[0];
-            dataInizio.value = oggi;
+            const oggi = new Date();
+            const gg = String(oggi.getDate()).padStart(2, '0');
+            const mm = String(oggi.getMonth() + 1).padStart(2, '0');
+            const aaaa = oggi.getFullYear();
+            dataInizio.value = `${gg}/${mm}/${aaaa}`;
         }
     } else {
         container.classList.add('opacity-40', 'pointer-events-none');
@@ -210,8 +231,7 @@ window.gestisciCambioToggleInfortunio = function (nuovoStato) {
 
         if (testoModale) {
             if (dataFineInserita) {
-                const dataFormatted = new Date(dataFineInserita).toLocaleDateString('it-IT');
-                testoModale.textContent = `Confermi di rientrare prima della data inserita (${dataFormatted})? Verrà aggiornata la data inserendo quella di oggi e salvata nello storico.`;
+                testoModale.textContent = `Confermi di rientrare prima della data inserita (${dataFineInserita})? Verrà aggiornata la data inserendo quella di oggi e salvata nello storico.`;
             } else {
                 testoModale.textContent = `Confermi di rientrare? Verrà inserita in automatico la data di oggi e l'infortunio verrà salvato nello storico.`;
             }
@@ -225,11 +245,12 @@ window.gestisciCambioToggleInfortunio = function (nuovoStato) {
 window.confermaRientro = function (confermato) {
     const toggle = document.getElementById('editInfortunioToggle');
     const dataFineInput = document.getElementById('editDataFine');
-    const oggi = new Date().toISOString().split('T')[0];
+    const oggi = new Date();
+    const oggiFormatted = `${String(oggi.getDate()).padStart(2, '0')}/${String(oggi.getMonth() + 1).padStart(2, '0')}/${oggi.getFullYear()}`;
 
     if (confermato) {
         toggle.checked = false;
-        dataFineInput.value = oggi;
+        dataFineInput.value = oggiFormatted;
         toggleInfortunioFields(false);
     } else {
         toggle.checked = true;
@@ -239,11 +260,12 @@ window.confermaRientro = function (confermato) {
 };
 
 window.salvaProfilo = async function () {
-    if (!currentUser || salvataggioProfiloInCorso) return;
+    if (!currentUser || currentUser.isStaff || salvataggioProfiloInCorso) return;
 
     const nuovoRuolo = document.getElementById('editProfileRuolo').value;
     const nuovoAnno = document.getElementById('editProfileAnno').value.trim();
-    const infortunata = document.getElementById('editInfortunioToggle').checked;
+    const toggleInfortunio = document.getElementById('editInfortunioToggle');
+    const infortunata = toggleInfortunio ? toggleInfortunio.checked : false;
     const dataInizioVal = document.getElementById('editDataInizio').value.trim();
     const dataFineVal = document.getElementById('editDataFine').value.trim();
 
@@ -252,58 +274,38 @@ window.salvaProfilo = async function () {
         return;
     }
 
-    if (infortunata && dataInizioVal && dataFineVal && dataFineVal < dataInizioVal) {
-        alert("La data di rientro non può essere precedente alla data di inizio infortunio!");
-        return;
-    }
-
     salvataggioProfiloInCorso = true;
     const btnSalva = document.getElementById('btnSalvaProfilo');
     if (btnSalva) {
         btnSalva.disabled = true;
-        btnSalva.textContent = 'Salvataggio...';
+        btnSalva.textContent = 'Salvataggio in corso...';
     }
 
     try {
         const eraInfortunata = currentUser.infortunata;
-        const inizioPrecedente = currentUser.data_inizio_infortunio;
-        const oggiStr = new Date().toISOString().split('T')[0];
-
-        let statoInfortunataFinale = infortunata;
-        let dataInizioFinale = infortunata ? dataInizioVal : null;
-        let dataFineFinale = (infortunata && dataFineVal !== "") ? dataFineVal : null;
 
         if (eraInfortunata && !infortunata) {
-            const dataInizioStorico = inizioPrecedente || dataInizioVal;
-            const dataFineStorico = dataFineVal !== "" ? dataFineVal : oggiStr;
-
-            if (dataInizioStorico) {
-                await inserisciInfortunioStoricoSicuro(currentUser.id, dataInizioStorico, dataFineStorico);
-            }
-            statoInfortunataFinale = false;
-            dataInizioFinale = null;
-            dataFineFinale = null;
-        } else if (infortunata && dataFineVal !== "" && dataFineVal < oggiStr) {
-            await inserisciInfortunioStoricoSicuro(currentUser.id, dataInizioVal, dataFineVal);
-            statoInfortunataFinale = false;
-            dataInizioFinale = null;
-            dataFineFinale = null;
+            const dataInizioStorico = currentUser.data_inizio_infortunio || dataInizioVal || "N/D";
+            const dataFineStorico = dataFineVal !== "" ? dataFineVal : new Date().toLocaleDateString('it-IT');
+            await inserisciInfortunioStoricoSicuro(currentUser.id, dataInizioStorico, dataFineStorico);
         }
 
         const datiAggiornati = {
             ruolo: nuovoRuolo,
             anno_nascita: nuovoAnno !== "" ? nuovoAnno : null,
-            infortunata: statoInfortunataFinale,
-            data_inizio_infortunio: dataInizioFinale,
-            data_fine_infortunio: dataFineFinale
+            infortunata: Boolean(infortunata),
+            data_inizio_infortunio: infortunata ? (dataInizioVal || new Date().toLocaleDateString('it-IT')) : null,
+            data_fine_infortunio: (infortunata && dataFineVal !== "") ? dataFineVal : null
         };
 
-        const { data, error } = await eseguiQueryConRetry(() =>
-            db.from('giocatrici').update(datiAggiornati).eq('id', currentUser.id).select()
-        );
+        const { data, error } = await db
+            .from('giocatrici')
+            .update(datiAggiornati)
+            .eq('id', currentUser.id)
+            .select();
 
         if (error) {
-            alert('Connessione instabile, impossibile salvare al momento. Riprova.');
+            alert('Errore di salvataggio su Supabase: ' + error.message);
         } else {
             if (data && data.length > 0) {
                 currentUser = data[0];
@@ -315,6 +317,8 @@ window.salvaProfilo = async function () {
                 currentUser.data_fine_infortunio = datiAggiornati.data_fine_infortunio;
             }
 
+            currentUser.isStaff = false;
+            currentUser.infortunata = Boolean(currentUser.infortunata);
             localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUser));
             closeProfileModal();
             aggiornaInterfaccia();
@@ -328,7 +332,55 @@ window.salvaProfilo = async function () {
     }
 };
 
-// --- GESTIONE AUTOCOMPILAZIONE INDIRIZZO CASA ---
+window.salvaProfiloStaff = async function () {
+    if (!currentUser || !currentUser.isStaff || salvataggioProfiloInCorso) return;
+
+    const nuovoRuolo = document.getElementById('editStaffRuolo').value;
+    const nuovoAnno = document.getElementById('editStaffAnno').value.trim();
+
+    salvataggioProfiloInCorso = true;
+    const btnSalva = document.getElementById('btnSalvaProfiloStaff');
+    if (btnSalva) {
+        btnSalva.disabled = true;
+        btnSalva.textContent = 'Salvataggio...';
+    }
+
+    try {
+        const datiAggiornati = {
+            ruolo_staff: nuovoRuolo,
+            anno_nascita: nuovoAnno !== "" ? nuovoAnno : null
+        };
+
+        const { data, error } = await eseguiQueryConRetry(() =>
+            db.from('staff').update(datiAggiornati).eq('id', currentUser.id).select()
+        );
+
+        if (error) {
+            console.error("Errore salvataggio staff Supabase:", error);
+            alert('Connessione instabile o errore nel salvataggio. Riprova.');
+        } else {
+            if (data && data.length > 0) {
+                currentUser.ruolo = data[0].ruolo_staff;
+                currentUser.anno_nascita = data[0].anno_nascita;
+            } else {
+                currentUser.ruolo = nuovoRuolo;
+                currentUser.anno_nascita = datiAggiornati.anno_nascita;
+            }
+
+            currentUser.isStaff = true;
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUser));
+            closeProfileStaffModal();
+            aggiornaInterfaccia();
+        }
+    } finally {
+        salvataggioProfiloInCorso = false;
+        if (btnSalva) {
+            btnSalva.disabled = false;
+            btnSalva.textContent = 'Salva Modifiche';
+        }
+    }
+};
+
 window.gestisciCambioLuogo = function (luogoSelezionato) {
     const inputIndirizzo = document.getElementById('indirizzo');
     if (!inputIndirizzo) return;
@@ -342,13 +394,11 @@ window.gestisciCambioLuogo = function (luogoSelezionato) {
     }
 };
 
-// --- GESTIONE TEMA ---
 window.toggleTheme = function () {
     const isDark = document.documentElement.classList.toggle('dark');
     localStorage.setItem('volley_theme', isDark ? 'dark' : 'light');
 };
 
-// --- GESTIONE MENU LATERALE ---
 window.toggleSidebar = function (apri) {
     const drawer = document.getElementById('sidebarDrawer');
     const overlay = document.getElementById('sidebarOverlay');
@@ -390,13 +440,162 @@ window.mostraSezione = function (sezione) {
         popolaSelectRiepilogo();
     } else if (sezione === 'infortuni') {
         secInfortuni.classList.remove('hidden');
-        caricaStoricoInfortuni();
+        if (currentUser && currentUser.isStaff) {
+            caricaStoricoInfortuniStaff();
+        } else {
+            caricaStoricoInfortuni();
+        }
     }
 };
 
+window.toggleAccordionInfortuniInCorso = function () {
+    const content = document.getElementById('contentInfortuniInCorso');
+    const arrow = document.getElementById('arrowInfortuniInCorso');
+    if (content && arrow) {
+        content.classList.toggle('hidden');
+        arrow.classList.toggle('rotate-180');
+    }
+};
+
+window.toggleAccordionGiocatriceStaff = function (giocatriceId) {
+    const tuttiContenuti = document.querySelectorAll('[id^="storico_giocatrice_"]');
+    const tutteFrecce = document.querySelectorAll('[id^="arrow_giocatrice_"]');
+
+    tuttiContenuti.forEach(el => {
+        if (el.id !== `storico_giocatrice_${giocatriceId}`) {
+            el.classList.add('hidden');
+        }
+    });
+
+    tutteFrecce.forEach(el => {
+        if (el.id !== `arrow_giocatrice_${giocatriceId}`) {
+            el.classList.remove('rotate-180');
+        }
+    });
+
+    const content = document.getElementById(`storico_giocatrice_${giocatriceId}`);
+    const arrow = document.getElementById(`arrow_giocatrice_${giocatriceId}`);
+    if (content && arrow) {
+        content.classList.toggle('hidden');
+        arrow.classList.toggle('rotate-180');
+    }
+};
+
+async function caricaStoricoInfortuniStaff() {
+    const boxWrapper = document.getElementById('boxInfortuniInCorsoWrapper');
+    const contentInCorso = document.getElementById('contentInfortuniInCorso');
+    const countBadge = document.getElementById('countInfortuniInCorso');
+    const listaGiocatriciContainer = document.getElementById('listaGiocatriciStoricoStaff');
+    const listaStoricoClassico = document.getElementById('listaStoricoInfortuni');
+
+    if (listaStoricoClassico) listaStoricoClassico.innerHTML = '';
+    if (!boxWrapper || !listaGiocatriciContainer) return;
+
+    listaGiocatriciContainer.innerHTML = '<p class="text-xs text-slate-400 text-center py-4">Caricamento dati infortuni...</p>';
+
+    const { data: giocatrici, error: errG } = await eseguiQueryConRetry(() => db.from('giocatrici').select('*').order('nome', { ascending: true }));
+    const { data: infortuniStorico, error: errI } = await eseguiQueryConRetry(() => db.from('infortuni').select('*').order('data_inizio', { ascending: false }));
+
+    if (errG || errI) {
+        listaGiocatriciContainer.innerHTML = '<p class="text-xs text-rose-500 text-center py-4">Errore nel caricamento dei dati.</p>';
+        return;
+    }
+
+    const infortunateInCorso = giocatrici.filter(g => g.infortunata && g.data_inizio_infortunio);
+
+    if (infortunateInCorso.length > 0) {
+        boxWrapper.classList.remove('hidden');
+        if (countBadge) countBadge.textContent = infortunateInCorso.length;
+
+        contentInCorso.innerHTML = infortunateInCorso.map(g => {
+            const dInizio = g.data_inizio_infortunio;
+            const dFine = g.data_fine_infortunio ? `fino al ${g.data_fine_infortunio}` : 'in corso';
+            return `
+                <div class="bg-white dark:bg-slate-900/80 p-3 rounded-xl border border-amber-200/80 dark:border-amber-900/50 flex justify-between items-center text-xs">
+                    <div>
+                        <span class="font-bold text-slate-900 dark:text-white text-sm">${g.nome} ${g.cognome}</span>
+                        <p class="text-slate-500 dark:text-slate-400 mt-0.5">Dal ${dInizio} (${dFine})</p>
+                    </div>
+                    <span class="bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 px-2 py-1 rounded-md font-semibold">${g.ruolo || 'Ruolo'}</span>
+                </div>
+            `;
+        }).join('');
+    } else {
+        boxWrapper.classList.add('hidden');
+    }
+
+    if (giocatrici.length === 0) {
+        listaGiocatriciContainer.innerHTML = '<p class="text-xs text-slate-400 text-center py-6">Nessuna giocatrice trovata.</p>';
+        return;
+    }
+
+    listaGiocatriciContainer.innerHTML = giocatrici.map(g => {
+        const storicoG = infortuniStorico ? infortuniStorico.filter(inf => inf.giocatrice_id === g.id) : [];
+
+        let htmlStoricoItem = '';
+        if (storicoG.length > 0) {
+            htmlStoricoItem = storicoG.map(inf => {
+                return `
+                    <div class="bg-slate-50 dark:bg-slate-900/60 p-2.5 rounded-xl border border-slate-100 dark:border-slate-700/60 flex justify-between items-center text-xs">
+                        <span class="text-slate-700 dark:text-slate-300">Dal <strong>${inf.data_inizio}</strong> al <strong>${inf.data_fine}</strong></span>
+                        <span class="bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded font-medium">Concluso</span>
+                    </div>
+                `;
+            }).join('');
+        } else {
+            htmlStoricoItem = '<p class="text-xs text-slate-400 italic py-1">Nessun infortunio nello storico.</p>';
+        }
+
+        let htmlInfortunioAttivoCard = '';
+        if (g.infortunata && g.data_inizio_infortunio) {
+            htmlInfortunioAttivoCard = `
+                <div class="bg-amber-50 dark:bg-amber-950/40 p-2.5 rounded-xl border border-amber-200 dark:border-amber-900/50 text-xs flex justify-between items-center mb-2">
+                    <span class="font-semibold text-amber-800 dark:text-amber-300">Infortunio Attivo dal ${g.data_inizio_infortunio}</span>
+                    <span class="bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 px-2 py-0.5 rounded font-bold">In corso</span>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden">
+                <button type="button" onclick="toggleAccordionGiocatriceStaff('${g.id}')"
+                    class="w-full p-3.5 text-left flex justify-between items-center cursor-pointer transition hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-9 h-9 rounded-full bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 font-bold text-xs flex items-center justify-center shrink-0">
+                            ${g.nome.charAt(0)}${g.cognome.charAt(0)}
+                        </div>
+                        <div>
+                            <span class="font-bold text-slate-800 dark:text-white text-sm">${g.nome} ${g.cognome}</span>
+                            <p class="text-xs text-slate-500 dark:text-slate-400">${g.ruolo || 'Ruolo non specificato'}</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        ${g.infortunata ? '<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>' : ''}
+                        <svg id="arrow_giocatrice_${g.id}" class="w-4 h-4 text-slate-400 transform transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </div>
+                </button>
+                <div id="storico_giocatrice_${g.id}" class="hidden p-3.5 pt-0 space-y-2 border-t border-slate-100 dark:border-slate-700/60 bg-slate-50/50 dark:bg-slate-800/30">
+                    <div class="pt-2"></div>
+                    ${htmlInfortunioAttivoCard}
+                    <p class="text-[11px] font-bold text-slate-400 uppercase tracking-wide">Storico Infortuni Passati</p>
+                    ${htmlStoricoItem}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
 async function caricaStoricoInfortuni() {
     const container = document.getElementById('listaStoricoInfortuni');
-    if (!container || !currentUser) return;
+    const boxWrapper = document.getElementById('boxInfortuniInCorsoWrapper');
+    const listaGiocatriciContainer = document.getElementById('listaGiocatriciStoricoStaff');
+
+    if (boxWrapper) boxWrapper.classList.add('hidden');
+    if (listaGiocatriciContainer) listaGiocatriciContainer.innerHTML = '';
+
+    if (!container || !currentUser || currentUser.isStaff) return;
 
     container.innerHTML = '<p class="text-xs text-slate-400 text-center py-4">Caricamento storico...</p>';
 
@@ -416,10 +615,8 @@ async function caricaStoricoInfortuni() {
 
     let htmlAttivo = '';
     if (currentUser.infortunata && currentUser.data_inizio_infortunio) {
-        const dInizio = new Date(currentUser.data_inizio_infortunio).toLocaleDateString('it-IT');
-        const testoFine = currentUser.data_fine_infortunio
-            ? `fino al ${new Date(currentUser.data_fine_infortunio).toLocaleDateString('it-IT')}`
-            : 'ad oggi';
+        const dInizio = currentUser.data_inizio_infortunio;
+        const testoFine = currentUser.data_fine_infortunio ? `fino al ${currentUser.data_fine_infortunio}` : 'ad oggi';
 
         htmlAttivo = `
             <div class="bg-amber-50 dark:bg-amber-950/30 p-4 rounded-2xl border border-amber-200 dark:border-amber-900/40 space-y-2">
@@ -435,15 +632,13 @@ async function caricaStoricoInfortuni() {
     let htmlStorico = '';
     if (data && data.length > 0) {
         htmlStorico = data.map(inf => {
-            const dInizio = new Date(inf.data_inizio).toLocaleDateString('it-IT');
-            const dFine = inf.data_fine ? new Date(inf.data_fine).toLocaleDateString('it-IT') : 'N/D';
             return `
                 <div class="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 space-y-2">
                     <div class="flex justify-between items-center">
                         <span class="text-xs font-semibold text-indigo-600 dark:text-indigo-400">Periodo di Stop</span>
                         <span class="text-xs bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2.5 py-1 rounded-full font-medium">Concluso</span>
                     </div>
-                    <p class="text-sm font-medium text-slate-700 dark:text-slate-200">Dal <strong class="text-slate-900 dark:text-white">${dInizio}</strong> al <strong class="text-slate-900 dark:text-white">${dFine}</strong></p>
+                    <p class="text-sm font-medium text-slate-700 dark:text-slate-200">Dal <strong class="text-slate-900 dark:text-white">${inf.data_inizio}</strong> al <strong class="text-slate-900 dark:text-white">${inf.data_fine}</strong></p>
                 </div>
             `;
         }).join('');
@@ -568,6 +763,27 @@ window.eseguiLogin = async function () {
     }
 
     try {
+        const { data: staffData, error: staffError } = await eseguiQueryConRetry(() =>
+            db.from('staff')
+                .select('*')
+                .ilike('nome', nomeVal)
+                .ilike('cognome', cognomeVal)
+        );
+
+        if (!staffError && staffData && staffData.length > 0) {
+            currentUser = {
+                id: staffData[0].id,
+                nome: staffData[0].nome,
+                cognome: staffData[0].cognome,
+                ruolo: staffData[0].ruolo_staff || staffData[0].ruolo,
+                anno_nascita: staffData[0].anno_nascita,
+                isStaff: true
+            };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUser));
+            aggiornaInterfaccia();
+            return;
+        }
+
         const { data, error } = await eseguiQueryConRetry(() =>
             db.from('giocatrici')
                 .select('*')
@@ -576,11 +792,14 @@ window.eseguiLogin = async function () {
         );
 
         if (error || !data || data.length === 0) {
-            alert('Giocatrice non trovata nel database della squadra.');
+            alert('Utente non trovato nel database della squadra o dello staff.');
             return;
         }
 
         currentUser = data[0];
+        currentUser.isStaff = false;
+        currentUser.infortunata = !!currentUser.infortunata;
+
         localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUser));
 
         await controllaScadenzaInfortunio();
@@ -620,18 +839,32 @@ function aggiornaInterfaccia() {
 
         if (sidebarName) sidebarName.textContent = `${currentUser.nome} ${currentUser.cognome}`;
         if (sidebarRoleYear) {
-            sidebarRoleYear.textContent = currentUser.anno_nascita
-                ? `${currentUser.ruolo || 'Ruolo'} • ${currentUser.anno_nascita}`
-                : `${currentUser.ruolo || 'Ruolo'}`;
+            sidebarRoleYear.textContent = currentUser.isStaff
+                ? (currentUser.anno_nascita ? `${currentUser.ruolo || 'Ruolo'} • ${currentUser.anno_nascita}` : `${currentUser.ruolo || 'Ruolo'}`)
+                : (currentUser.anno_nascita ? `${currentUser.ruolo || 'Ruolo'} • ${currentUser.anno_nascita}` : `${currentUser.ruolo || 'Ruolo'}`);
         }
         if (sidebarInitials) {
             const iniziali = `${currentUser.nome.charAt(0)}${currentUser.cognome.charAt(0)}`.toUpperCase();
             sidebarInitials.textContent = iniziali;
         }
 
+        const btnInfortuniMenu = document.querySelector('button[onclick="mostraSezione(\'infortuni\')"]');
+        if (btnInfortuniMenu) {
+            btnInfortuniMenu.style.display = 'flex';
+        }
+
+        const btnMenuRiepilogo = document.getElementById('btnMenuRiepilogo');
+        if (btnMenuRiepilogo) {
+            btnMenuRiepilogo.style.display = currentUser.isStaff ? 'none' : 'flex';
+        }
+
         const secInfortuni = document.getElementById('section-infortuni');
         if (secInfortuni && !secInfortuni.classList.contains('hidden')) {
-            caricaStoricoInfortuni();
+            if (currentUser.isStaff) {
+                caricaStoricoInfortuniStaff();
+            } else {
+                caricaStoricoInfortuni();
+            }
         }
 
         fetchMatches();
@@ -640,7 +873,7 @@ function aggiornaInterfaccia() {
 
 function isGiocatriceInfortunataPerPartita(matchDateStr, giocatrice) {
     let target = giocatrice;
-    if (currentUser && target && target.id === currentUser.id) {
+    if (currentUser && !currentUser.isStaff && target && target.id === currentUser.id) {
         target = currentUser;
     }
 
@@ -693,7 +926,7 @@ window.deleteMatch = async function (id) {
 };
 
 async function fetchMatches() {
-    if (currentUser) {
+    if (currentUser && !currentUser.isStaff) {
         await controllaScadenzaInfortunio();
     }
 
@@ -794,20 +1027,23 @@ function creaCardElement(match, isArchivio = false, isInEvidenza = false) {
     const dateFormatted = new Date(match.data_ora).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
 
     let badgeStatus = '';
-    const isInfortunataMatch = isGiocatriceInfortunataPerPartita(match.data_ora, currentUser);
 
-    if (isInfortunataMatch) {
-        badgeStatus = '<span class="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-full font-medium">Infortunata</span>';
-    } else {
-        let miaPresenza = null;
-        if (currentUser && match.presenze) {
-            const p = match.presenze.find(x => x.giocatrice_id === currentUser.id);
-            if (p) miaPresenza = p.presente;
+    if (!currentUser || !currentUser.isStaff) {
+        const isInfortunataMatch = isGiocatriceInfortunataPerPartita(match.data_ora, currentUser);
+
+        if (isInfortunataMatch) {
+            badgeStatus = '<span class="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-full font-medium">Infortunata</span>';
+        } else {
+            let miaPresenza = null;
+            if (currentUser && match.presenze) {
+                const p = match.presenze.find(x => x.giocatrice_id === currentUser.id);
+                if (p) miaPresenza = p.presente;
+            }
+
+            badgeStatus = '<span class="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-full font-medium">Non risposto</span>';
+            if (miaPresenza === true) badgeStatus = '<span class="text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-full font-medium">Ci sono</span>';
+            if (miaPresenza === false) badgeStatus = '<span class="text-xs text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-1 rounded-full font-medium">Assente</span>';
         }
-
-        badgeStatus = '<span class="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2.5 py-1 rounded-full font-medium">Non risposto</span>';
-        if (miaPresenza === true) badgeStatus = '<span class="text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-full font-medium">Ci sono</span>';
-        if (miaPresenza === false) badgeStatus = '<span class="text-xs text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-1 rounded-full font-medium">Assente</span>';
     }
 
     const card = document.createElement('div');
@@ -820,8 +1056,8 @@ function creaCardElement(match, isArchivio = false, isInEvidenza = false) {
         card.className = "bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 flex flex-col space-y-3 transition-colors";
     }
 
-    const clickAction = isArchivio
-        ? `apriDettaglioArchivio('${match.id}')`
+    const clickAction = isArchivio || (currentUser && currentUser.isStaff)
+        ? `apriDettaglioStaff('${match.id}')`
         : `openPresenceModal('${match.id}', '${match.avversario.replace(/'/g, "\\'")}')`;
 
     let mappaHtml = '';
@@ -850,16 +1086,17 @@ function creaCardElement(match, isArchivio = false, isInEvidenza = false) {
                 <span class="text-xs font-semibold text-indigo-600 dark:text-indigo-400">${match.luogo || 'Partita'}</span>
                 <h3 class="font-bold text-slate-800 dark:text-white text-base">vs ${match.avversario}</h3>
                 <p class="text-xs text-slate-500 dark:text-slate-400">${dateFormatted}</p>
-                <div class="mt-2">${!isArchivio ? badgeStatus : '<span class="text-xs text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 px-2.5 py-1 rounded-full font-medium">Clicca per vedere il resoconto</span>'}</div>
+                ${!isArchivio && currentUser && !currentUser.isStaff ? `<div class="mt-2">${badgeStatus}</div>` : ''}
             </div>
             <div class="flex space-x-1 items-center">
-                ${!isArchivio ? `
+                ${!isArchivio && currentUser ? `
                 <button type="button" onclick='editMatch(${JSON.stringify(match).replace(/'/g, "&#39;")})' class="p-2 text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition cursor-pointer" title="Modifica">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
                 </button>
+                ${currentUser.isStaff ? `
                 <button type="button" onclick="deleteMatch('${match.id}')" class="p-2 text-slate-400 hover:text-rose-500 transition cursor-pointer" title="Elimina">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                </button>
+                </button>` : ''}
                 ` : ''}
             </div>
         </div>
@@ -869,37 +1106,21 @@ function creaCardElement(match, isArchivio = false, isInEvidenza = false) {
     return card;
 }
 
-window.apriDettaglioArchivio = function (matchId) {
-    mostraSezione('riepilogo');
-    rimuoviFiltriArchivio();
-    const matchInfo = cachePartiteGlobali.find(m => m.id === matchId);
-    if (!matchInfo) return;
-
-    const selectContainer = document.getElementById('selectPartitaRiepilogo').parentElement;
-    const dataFormatted = new Date(matchInfo.data_ora).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
-
-    selectContainer.innerHTML = `
-        <h2 class="font-bold text-slate-800 dark:text-white text-base">Partita Archiviata</h2>
-        <p class="text-xs text-slate-500 dark:text-slate-400">Resoconto storico della partita selezionata.</p>
-        <div class="w-full p-3 bg-slate-100 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-300 flex justify-between items-center cursor-default">
-            <span>vs ${matchInfo.avversario} (${dataFormatted})</span>
-            <span class="text-xs bg-slate-200 dark:bg-slate-600 px-2.5 py-1 rounded text-slate-500 dark:text-slate-300">Archiviata</span>
-        </div>
-        <button type="button" onclick="showArchivedMatches()" class="text-xs text-indigo-600 dark:text-indigo-400 hover:underline pt-1 inline-block cursor-pointer">← Torna alle partite archiviate</button>
-    `;
-
-    caricaDettaglioPartita(matchId);
-};
-
 window.ripristinaSelectRiepilogoStruttura = function () {
     const container = document.getElementById('section-riepilogo');
     const boxCard = container.querySelector('.bg-white, .dark\\:bg-slate-800');
     if (boxCard) {
         boxCard.innerHTML = `
+            <div class="mb-3">
+                <button type="button" onclick="mostraSezione('calendario')"
+                    class="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center space-x-1 cursor-pointer">
+                    <span>← Torna al Calendario</span>
+                </button>
+            </div>
             <h2 class="font-bold text-slate-800 dark:text-white text-base">Seleziona Partita</h2>
             <p class="text-xs text-slate-500 dark:text-slate-400">Scegli la partita per visualizzare i convocati e il conteggio dei ruoli.</p>
             <select id="selectPartitaRiepilogo" onchange="caricaDettaglioPartita(this.value)"
-                class="w-full p-3 border dark:border-slate-600 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 dark:bg-slate-700 text-slate-800 dark:text-white">
+                class="w-full p-3 mt-2 border dark:border-slate-600 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50 dark:bg-slate-700 text-slate-800 dark:text-white">
                 <option value="">-- Seleziona una partita --</option>
             </select>
         `;
@@ -932,7 +1153,50 @@ function popolaSelectRiepilogo() {
     }
 }
 
-window.caricaDettaglioPartita = async function (matchId) {
+// --- APERTURA DETTAGLIO DAL CALENDARIO O ARCHIVIO ---
+window.apriDettaglioStaff = function (matchId) {
+    mostraSezione('riepilogo');
+    const matchInfo = cachePartiteGlobali.find(m => m.id === matchId);
+    if (!matchInfo) return;
+
+    const adesso = new Date();
+    const èPassata = new Date(matchInfo.data_ora) < adesso;
+
+    const containerSezioneRiepilogo = document.getElementById('section-riepilogo');
+    const boxCard = containerSezioneRiepilogo.querySelector('.bg-white, .dark\\:bg-slate-800');
+
+    if (boxCard) {
+        const dataFormatted = new Date(matchInfo.data_ora).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' });
+
+        if (èPassata) {
+            boxCard.innerHTML = `
+                <div class="mb-3">
+                    <button type="button" onclick="showArchivedMatches()"
+                        class="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center space-x-1 cursor-pointer">
+                        <span>← Torna alle partite archiviate</span>
+                    </button>
+                </div>
+                <h2 class="font-bold text-slate-800 dark:text-white text-base">Partita Archiviata</h2>
+                <p class="text-xs text-slate-500 dark:text-slate-400">Resoconto storico della partita selezionata.</p>
+                <div class="w-full p-3 mt-2 bg-slate-100 dark:bg-slate-700/60 border border-slate-200 dark:border-slate-600 rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-300 flex justify-between items-center cursor-default">
+                    <span>vs ${matchInfo.avversario} (${dataFormatted})</span>
+                    <span class="text-xs bg-slate-200 dark:bg-slate-600 px-2.5 py-1 rounded text-slate-500 dark:text-slate-300">Archiviata</span>
+                </div>
+            `;
+        } else {
+            ripristinaSelectRiepilogoStruttura();
+            const selectPartita = document.getElementById('selectPartitaRiepilogo');
+            if (selectPartita) {
+                selectPartita.value = matchId;
+            }
+        }
+    }
+
+    caricaDettaglioPartita(matchId, èPassata);
+};
+
+// --- CARICAMENTO DETTAGLIO PARTITA (CON CONTROLLO ARCHIVIO) ---
+window.caricaDettaglioPartita = async function (matchId, forzaArchivio = false) {
     const container = document.getElementById('dettaglioPartitaContainer');
     const titolo = document.getElementById('dettaglioTitoloMatch');
     const divPresenti = document.getElementById('listaPresentiDettaglio');
@@ -962,16 +1226,20 @@ window.caricaDettaglioPartita = async function (matchId) {
         return;
     }
 
+    const adesso = new Date();
+    const èPartitaPassata = forzaArchivio || (new Date(matchInfo.data_ora) < adesso);
+
     titolo.textContent = `Partita vs ${matchInfo.avversario}`;
 
     let presentiList = [];
     let infortunateList = [];
     let assentiList = [];
+    let nonHannoRispostoList = [];
     let conteggioRuoli = {};
 
     giocatrici.forEach(g => {
         let giocatriceDaControllare = g;
-        if (currentUser && g.id === currentUser.id) {
+        if (currentUser && !currentUser.isStaff && g.id === currentUser.id) {
             giocatriceDaControllare = currentUser;
         }
 
@@ -984,6 +1252,8 @@ window.caricaDettaglioPartita = async function (matchId) {
                 conteggioRuoli[g.ruolo] = (conteggioRuoli[g.ruolo] || 0) + 1;
             } else if (registro && registro.presente === false) {
                 assentiList.push(g);
+            } else {
+                nonHannoRispostoList.push(g);
             }
         }
     });
@@ -1022,6 +1292,41 @@ window.caricaDettaglioPartita = async function (matchId) {
                 <span class="text-xs bg-rose-200 dark:bg-rose-900/60 text-rose-800 dark:text-rose-300 px-2 py-0.5 rounded-md font-medium">${g.ruolo}</span>
             </div>
         `).join('');
+    }
+
+    let divContainerNR = document.getElementById('containerNonRispostoDettaglio');
+    if (!divContainerNR) {
+        const cardDettaglio = divAssenti.parentElement.parentElement;
+        divContainerNR = document.createElement('div');
+        divContainerNR.id = 'containerNonRispostoDettaglio';
+        divContainerNR.className = "border-t dark:border-slate-700 pt-3 mt-3 space-y-3";
+        cardDettaglio.appendChild(divContainerNR);
+    }
+
+    if (currentUser && currentUser.isStaff && !èPartitaPassata) {
+        divContainerNR.style.display = 'block';
+        divContainerNR.innerHTML = `
+            <h4 class="text-xs font-bold text-slate-600 dark:text-slate-400 mb-2 uppercase">Non hanno risposto</h4>
+            <div id="listaNonRispostoDettaglio" class="space-y-1.5 text-sm">
+                ${nonHannoRispostoList.length ? nonHannoRispostoList.map(g => `
+                    <div class="flex justify-between items-center bg-slate-100 dark:bg-slate-700/50 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600">
+                        <span class="font-semibold text-slate-700 dark:text-slate-200">${g.nome}${g.cognome}</span>
+                        <span class="text-xs bg-slate-200 dark:bg-slate-600 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-md font-medium">${g.ruolo}</span>
+                    </div>
+                `).join('') : '<p class="text-xs text-slate-400 italic">Tutte le giocatrici hanno risposto!</p>'}
+            </div>
+            <div id="containerBottoneSollecita">
+                ${nonHannoRispostoList.length > 0 ? `
+                    <a href="https://api.whatsapp.com/send?text=${encodeURIComponent(`Ciao ragazze! Vi ricordo di inserire la vostra disponibilità per la partita vs ${matchInfo.avversario}.\n\nMancano le risposte di:\n${nonHannoRispostoList.map(g => `- ${g.nome}${g.cognome}`).join('\n')}\n\nGrazie! 🏐`)}" target="_blank"
+                       class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-3 px-4 rounded-xl flex items-center justify-center space-x-2 transition shadow-sm cursor-pointer mt-3">
+                        <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/></svg>
+                        <span>Sollecita risposta</span>
+                    </a>
+                ` : ''}
+            </div>
+        `;
+    } else {
+        divContainerNR.style.display = 'none';
     }
 
     const ruoliFissi = ['Palleggiatrice', 'Opposto', 'Centro', 'Banda', 'Libero'];
@@ -1065,7 +1370,7 @@ window.caricaDettaglioPartita = async function (matchId) {
 };
 
 window.openPresenceModal = function (matchId, avversario) {
-    if (!currentUser) return;
+    if (!currentUser || currentUser.isStaff) return;
 
     const match = cachePartiteGlobali.find(m => m.id === matchId);
     if (match && isGiocatriceInfortunataPerPartita(match.data_ora, currentUser)) {
@@ -1085,7 +1390,7 @@ window.closePresenceModal = function () {
 };
 
 window.updatePresence = async function (presente) {
-    if (!currentUser || !activeMatchIdForPresence || salvataggioPresenzaInCorso) return;
+    if (!currentUser || currentUser.isStaff || !activeMatchIdForPresence || salvataggioPresenzaInCorso) return;
 
     salvataggioPresenzaInCorso = true;
     try {
@@ -1105,5 +1410,59 @@ window.updatePresence = async function (presente) {
         }
     } finally {
         salvataggioPresenzaInCorso = false;
+    }
+};
+
+window.closeProfileStaffModal = function () {
+    const modal = document.getElementById('profileStaffModal');
+    if (modal) modal.classList.add('hidden');
+};
+
+window.salvaProfiloStaff = async function () {
+    if (!currentUser || !currentUser.isStaff || salvataggioProfiloInCorso) return;
+
+    const nuovoRuolo = document.getElementById('editStaffRuolo').value;
+    const nuovoAnno = document.getElementById('editStaffAnno').value.trim();
+
+    salvataggioProfiloInCorso = true;
+    const btnSalva = document.getElementById('btnSalvaProfiloStaff');
+    if (btnSalva) {
+        btnSalva.disabled = true;
+        btnSalva.textContent = 'Salvataggio...';
+    }
+
+    try {
+        const dataAggiornati = {
+            ruolo_staff: nuovoRuolo,
+            anno_nascita: nuovoAnno !== "" ? nuovoAnno : null
+        };
+
+        const { data, error } = await eseguiQueryConRetry(() =>
+            db.from('staff').update(dataAggiornati).eq('id', currentUser.id).select()
+        );
+
+        if (error) {
+            console.error("Errore salvataggio staff Supabase:", error);
+            alert('Connessione instabile o errore nel salvataggio. Riprova.');
+        } else {
+            if (data && data.length > 0) {
+                currentUser.ruolo = data[0].ruolo_staff;
+                currentUser.anno_nascita = data[0].anno_nascita;
+            } else {
+                currentUser.ruolo = nuovoRuolo;
+                currentUser.anno_nascita = dataAggiornati.anno_nascita;
+            }
+
+            currentUser.isStaff = true;
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUser));
+            closeProfileStaffModal();
+            aggiornaInterfaccia();
+        }
+    } finally {
+        salvataggioProfiloInCorso = false;
+        if (btnSalva) {
+            btnSalva.disabled = false;
+            btnSalva.textContent = 'Salva Modifiche';
+        }
     }
 };
