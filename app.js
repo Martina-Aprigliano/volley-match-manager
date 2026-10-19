@@ -14,8 +14,39 @@ let controlloScadenzaInCorso = false;
 let salvataggioProfiloInCorso = false;
 let salvataggioPartitaInCorso = false;
 let salvataggioPresenzaInCorso = false;
+let datiPartitaInAttesaDiConferma = null;
 
 const INDIRIZZO_CASA = "Oratorio Don Bosco Carugate, Via Papa Pio XI, 36, 20061 Carugate MI";
+
+// --- UTILITY PER LE DATE (Standard YYYY-MM-DD per DB e Input, GG/MM/AAAA per visualizzazione) ---
+function getOggiISO() {
+    const oggi = new Date();
+    const yyyy = oggi.getFullYear();
+    const mm = String(oggi.getMonth() + 1).padStart(2, '0');
+    const dd = String(oggi.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+}
+
+function normalizzaDataPerInput(dateStr) {
+    if (!dateStr) return '';
+    if (dateStr.includes('/')) {
+        const parti = dateStr.split('/');
+        if (parti.length === 3) {
+            return `${parti[2]}-${parti[1].padStart(2, '0')}-${parti[0].padStart(2, '0')}`;
+        }
+    }
+    return dateStr.slice(0, 10);
+}
+
+function formattaDataBella(dateStr) {
+    if (!dateStr) return 'N/D';
+    if (dateStr.includes('/')) return dateStr;
+    const parti = dateStr.slice(0, 10).split('-');
+    if (parti.length === 3) {
+        return `${parti[2]}/${parti[1]}/${parti[0]}`;
+    }
+    return dateStr;
+}
 
 async function eseguiQueryConRetry(fnQuery, tentativi = 2) {
     for (let i = 0; i < tentativi; i++) {
@@ -42,6 +73,15 @@ document.addEventListener('DOMContentLoaded', () => {
     aggiornaInterfaccia();
     testaConnessioneGiocatrici();
 
+    // Sincronizza il minimo selezionabile sulla data di fine infortunio
+    const inputInizio = document.getElementById('editDataInizio');
+    const inputFine = document.getElementById('editDataFine');
+    if (inputInizio && inputFine) {
+        inputInizio.addEventListener('change', () => {
+            inputFine.min = inputInizio.value || '';
+        });
+    }
+
     const matchForm = document.getElementById('matchForm');
     if (matchForm) {
         matchForm.addEventListener('submit', async (e) => {
@@ -59,57 +99,100 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            salvataggioPartitaInCorso = true;
-            const btnSubmit = document.getElementById('btnSalvaMatch');
-            if (btnSubmit) {
-                btnSubmit.disabled = true;
-                btnSubmit.textContent = 'Salvataggio...';
+            // Controllo se esiste già una partita nella stessa giornata (YYYY-MM-DD)
+            const giornoScelto = dataOra.slice(0, 10);
+            const partitaStessoGiorno = cachePartiteGlobali.find(m => {
+                if (!m.data_ora) return false;
+                const stessoGiorno = m.data_ora.slice(0, 10) === giornoScelto;
+                const nonStessaPartitaInModifica = !id || String(m.id) !== String(id);
+                return stessoGiorno && nonStessaPartitaInModifica;
+            });
+
+            if (partitaStessoGiorno) {
+                // Salviamo temporaneamente i dati e mostriamo il modale di avviso
+                datiPartitaInAttesaDiConferma = { id, avversario, dataOra, luogo, indirizzo };
+                const oraEsistente = new Date(partitaStessoGiorno.data_ora).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+                const dataEsistenteBella = formattaDataBella(giornoScelto);
+                const testoAvviso = document.getElementById('duplicateMatchText');
+                if (testoAvviso) {
+                    testoAvviso.innerHTML = `C'è già una partita programmata per il <strong>${dataEsistenteBella}</strong> (vs <strong>${partitaStessoGiorno.avversario}</strong> alle ore ${oraEsistente}).<br><br>Sei sicura di volerne creare un'altra nella stessa data?`;
+                }
+                document.getElementById('duplicateMatchModal').classList.remove('hidden');
+                return;
             }
 
-            try {
-                let res;
-                if (id) {
-                    res = await eseguiQueryConRetry(() => db.from('partite').update({ avversario, data_ora: dataOra, luogo, indirizzo }).eq('id', id));
-                } else {
-                    res = await eseguiQueryConRetry(() => db.from('partite').insert([{ avversario, data_ora: dataOra, luogo, indirizzo }]));
-                }
-
-                if (res && res.error) {
-                    alert('Errore di rete durante il salvataggio. Riprova tra un istante.');
-                } else {
-                    matchForm.reset();
-                    document.getElementById('matchId').value = '';
-                    window.toggleMatchForm(false);
-                    fetchMatches();
-                }
-            } finally {
-                salvataggioPartitaInCorso = false;
-                if (btnSubmit) {
-                    btnSubmit.disabled = false;
-                    btnSubmit.textContent = 'Salva';
-                }
-            }
+            await procediSalvataggioPartita({ id, avversario, dataOra, luogo, indirizzo });
         });
     }
 });
 
+window.confermaCreazioneDuplicata = async function (confermato) {
+    document.getElementById('duplicateMatchModal').classList.add('hidden');
+    if (confermato && datiPartitaInAttesaDiConferma) {
+        const payload = datiPartitaInAttesaDiConferma;
+        datiPartitaInAttesaDiConferma = null;
+        await procediSalvataggioPartita(payload);
+    } else {
+        datiPartitaInAttesaDiConferma = null;
+    }
+};
+
+async function procediSalvataggioPartita({ id, avversario, dataOra, luogo, indirizzo }) {
+    if (salvataggioPartitaInCorso) return;
+    salvataggioPartitaInCorso = true;
+
+    const matchForm = document.getElementById('matchForm');
+    const btnSubmit = document.getElementById('btnSalvaMatch');
+    if (btnSubmit) {
+        btnSubmit.disabled = true;
+        btnSubmit.textContent = 'Salvataggio...';
+    }
+
+    try {
+        let res;
+        if (id) {
+            res = await eseguiQueryConRetry(() => db.from('partite').update({ avversario, data_ora: dataOra, luogo, indirizzo }).eq('id', id));
+        } else {
+            res = await eseguiQueryConRetry(() => db.from('partite').insert([{ avversario, data_ora: dataOra, luogo, indirizzo }]));
+        }
+
+        if (res && res.error) {
+            alert('Errore di rete durante il salvataggio. Riprova tra un istante.');
+        } else {
+            if (matchForm) matchForm.reset();
+            document.getElementById('matchId').value = '';
+            window.toggleMatchForm(false);
+            fetchMatches();
+        }
+    } finally {
+        salvataggioPartitaInCorso = false;
+        if (btnSubmit) {
+            btnSubmit.disabled = false;
+            btnSubmit.textContent = 'Salva';
+        }
+    }
+}
+
 async function inserisciInfortunioStoricoSicuro(giocatriceId, dataInizio, dataFine) {
     if (!giocatriceId || !dataInizio || !dataFine) return;
+
+    const inizioISO = normalizzaDataPerInput(dataInizio);
+    const fineISO = normalizzaDataPerInput(dataFine);
 
     const { data: esistenti } = await eseguiQueryConRetry(() =>
         db.from('infortuni')
             .select('id')
             .eq('giocatrice_id', giocatriceId)
-            .eq('data_inizio', dataInizio)
-            .eq('data_fine', dataFine)
+            .eq('data_inizio', inizioISO)
+            .eq('data_fine', fineISO)
     );
 
     if (!esistenti || esistenti.length === 0) {
         await eseguiQueryConRetry(() =>
             db.from('infortuni').insert([{
                 giocatrice_id: giocatriceId,
-                data_inizio: dataInizio,
-                data_fine: dataFine
+                data_inizio: inizioISO,
+                data_fine: fineISO
             }])
         );
     }
@@ -121,12 +204,10 @@ async function controllaScadenzaInfortunio() {
     controlloScadenzaInCorso = true;
     try {
         if (currentUser.data_fine_infortunio) {
-            const oggi = new Date();
-            oggi.setHours(0, 0, 0, 0);
-            const dataFine = new Date(currentUser.data_fine_infortunio);
-            dataFine.setHours(0, 0, 0, 0);
+            const oggiISO = getOggiISO();
+            const fineISO = normalizzaDataPerInput(currentUser.data_fine_infortunio);
 
-            if (oggi > dataFine) {
+            if (oggiISO > fineISO) {
                 const inizioDaArchiviare = currentUser.data_inizio_infortunio;
                 const fineDaArchiviare = currentUser.data_fine_infortunio;
 
@@ -186,9 +267,10 @@ window.openProfileModal = function () {
         const dataInizio = document.getElementById('editDataInizio');
         const dataFine = document.getElementById('editDataFine');
 
-        toggle.checked = !!currentUser.infortunata;
-        dataInizio.value = currentUser.data_inizio_infortunio || '';
-        dataFine.value = currentUser.data_fine_infortunio || '';
+        toggle.checked = Boolean(currentUser.infortunata);
+        dataInizio.value = normalizzaDataPerInput(currentUser.data_inizio_infortunio);
+        dataFine.value = normalizzaDataPerInput(currentUser.data_fine_infortunio);
+        dataFine.min = dataInizio.value || '';
 
         toggleInfortunioFields(toggle.checked);
 
@@ -201,22 +283,22 @@ window.closeProfileModal = function () {
 };
 
 window.closeProfileStaffModal = function () {
-    document.getElementById('profileStaffModal').classList.add('hidden');
+    const modal = document.getElementById('profileStaffModal');
+    if (modal) modal.classList.add('hidden');
 };
 
 window.toggleInfortunioFields = function (attivo) {
     const container = document.getElementById('containerDateInfortunio');
     const dataInizio = document.getElementById('editDataInizio');
+    const dataFine = document.getElementById('editDataFine');
 
     if (attivo) {
         container.classList.remove('opacity-40', 'pointer-events-none');
-        // Imposta la data odierna nel formato standard corretto per l'input type="date" (YYYY-MM-DD)
         if (!dataInizio.value) {
-            const oggi = new Date();
-            const yyyy = oggi.getFullYear();
-            const mm = String(oggi.getMonth() + 1).padStart(2, '0');
-            const dd = String(oggi.getDate()).padStart(2, '0');
-            dataInizio.value = `${yyyy}-${mm}-${dd}`;
+            dataInizio.value = getOggiISO();
+        }
+        if (dataFine) {
+            dataFine.min = dataInizio.value;
         }
     } else {
         container.classList.add('opacity-40', 'pointer-events-none');
@@ -224,44 +306,76 @@ window.toggleInfortunioFields = function (attivo) {
 };
 
 window.gestisciCambioToggleInfortunio = function (nuovoStato) {
-    // Se spengi il toggle, mostriamo sempre il modale di conferma per il rientro
+    const eraGiaInfortunataNelDB = Boolean(currentUser && currentUser.infortunata);
+
     if (!nuovoStato) {
-        const toggle = document.getElementById('editInfortunioToggle');
-        // Rimettiamo temporaneamente il toggle su true finché non conferma
-        if (toggle) toggle.checked = true;
+        if (eraGiaInfortunataNelDB) {
+            const toggle = document.getElementById('editInfortunioToggle');
+            if (toggle) toggle.checked = true;
 
-        const testoModale = document.getElementById('confirmRientroText');
-        const dataFineInserita = document.getElementById('editDataFine').value || currentUser.data_fine_infortunio;
+            const testoModale = document.getElementById('confirmRientroText');
+            const dataFineInserita = document.getElementById('editDataFine').value || currentUser.data_fine_infortunio;
 
-        if (testoModale) {
-            if (dataFineInserita) {
-                testoModale.textContent = `Confermi di rientrare prima della data inserita (${dataFineInserita})? Verrà aggiornata la data inserendo quella di oggi e salvata nello storico.`;
-            } else {
-                testoModale.textContent = `Confermi di rientrare? Verrà inserita in automatico la data di oggi e l'infortunio verrà salvato nello storico.`;
+            if (testoModale) {
+                if (dataFineInserita) {
+                    testoModale.textContent = `Confermi di rientrare prima della data prevista (${formattaDataBella(dataFineInserita)})? Verrà salvata la data di oggi nello storico.`;
+                } else {
+                    testoModale.textContent = `Confermi di rientrare in campo? Verrà inserita in automatico la data di oggi e l'infortunio verrà archiviato nello storico.`;
+                }
             }
+            document.getElementById('confirmRientroModal').classList.remove('hidden');
+        } else {
+            document.getElementById('editDataInizio').value = '';
+            document.getElementById('editDataFine').value = '';
+            toggleInfortunioFields(false);
         }
-        document.getElementById('confirmRientroModal').classList.remove('hidden');
     } else {
-        // Se lo stai attivando, abilitiamo i campi e impostiamo la data di oggi
         toggleInfortunioFields(true);
     }
 };
 
-window.confermaRientro = function (confermato) {
+window.confermaRientro = async function (confermato) {
     const toggle = document.getElementById('editInfortunioToggle');
     const dataFineInput = document.getElementById('editDataFine');
-    const oggi = new Date();
-    const oggiFormatted = `${String(oggi.getDate()).padStart(2, '0')}/${String(oggi.getMonth() + 1).padStart(2, '0')}/${oggi.getFullYear()}`;
+    const oggiISO = getOggiISO();
 
     if (confermato) {
         toggle.checked = false;
-        dataFineInput.value = oggiFormatted;
+        dataFineInput.value = oggiISO;
         toggleInfortunioFields(false);
+
+        if (currentUser && !currentUser.isStaff) {
+            const dataInizioDaSalvare = currentUser.data_inizio_infortunio || document.getElementById('editDataInizio').value || oggiISO;
+
+            await inserisciInfortunioStoricoSicuro(currentUser.id, dataInizioDaSalvare, oggiISO);
+
+            const datiReset = {
+                infortunata: false,
+                data_inizio_infortunio: null,
+                data_fine_infortunio: null
+            };
+
+            const { data, error } = await eseguiQueryConRetry(() =>
+                db.from('giocatrici').update(datiReset).eq('id', currentUser.id).select()
+            );
+
+            if (!error && data && data.length > 0) {
+                currentUser = data[0];
+            } else {
+                currentUser.infortunata = false;
+                currentUser.data_inizio_infortunio = null;
+                currentUser.data_fine_infortunio = null;
+            }
+            currentUser.isStaff = false;
+            currentUser.infortunata = false;
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUser));
+        }
     } else {
         toggle.checked = true;
         toggleInfortunioFields(true);
     }
     document.getElementById('confirmRientroModal').classList.add('hidden');
+    aggiornaInterfaccia();
 };
 
 window.salvaProfilo = async function () {
@@ -279,6 +393,11 @@ window.salvaProfilo = async function () {
         return;
     }
 
+    if (infortunata && dataInizioVal && dataFineVal && dataFineVal < dataInizioVal) {
+        alert("La data di rientro non può essere precedente alla data di inizio infortunio!");
+        return;
+    }
+
     salvataggioProfiloInCorso = true;
     const btnSalva = document.getElementById('btnSalvaProfilo');
     if (btnSalva) {
@@ -287,11 +406,12 @@ window.salvaProfilo = async function () {
     }
 
     try {
-        const eraInfortunata = currentUser.infortunata;
+        const eraInfortunata = Boolean(currentUser.infortunata);
+        const oggiISO = getOggiISO();
 
         if (eraInfortunata && !infortunata) {
-            const dataInizioStorico = currentUser.data_inizio_infortunio || dataInizioVal || "N/D";
-            const dataFineStorico = dataFineVal !== "" ? dataFineVal : new Date().toLocaleDateString('it-IT');
+            const dataInizioStorico = currentUser.data_inizio_infortunio || dataInizioVal || oggiISO;
+            const dataFineStorico = dataFineVal !== "" ? dataFineVal : oggiISO;
             await inserisciInfortunioStoricoSicuro(currentUser.id, dataInizioStorico, dataFineStorico);
         }
 
@@ -299,15 +419,13 @@ window.salvaProfilo = async function () {
             ruolo: nuovoRuolo,
             anno_nascita: nuovoAnno !== "" ? nuovoAnno : null,
             infortunata: Boolean(infortunata),
-            data_inizio_infortunio: infortunata ? (dataInizioVal || new Date().toLocaleDateString('it-IT')) : null,
+            data_inizio_infortunio: infortunata ? (dataInizioVal || oggiISO) : null,
             data_fine_infortunio: (infortunata && dataFineVal !== "") ? dataFineVal : null
         };
 
-        const { data, error } = await db
-            .from('giocatrici')
-            .update(datiAggiornati)
-            .eq('id', currentUser.id)
-            .select();
+        const { data, error } = await eseguiQueryConRetry(() =>
+            db.from('giocatrici').update(datiAggiornati).eq('id', currentUser.id).select()
+        );
 
         if (error) {
             alert('Errore di salvataggio su Supabase: ' + error.message);
@@ -434,7 +552,8 @@ window.mostraSezione = function (sezione) {
         mostraSoloArchivio = false;
         const headerTitle = document.getElementById('sectionHeaderTitle');
         if (headerTitle) headerTitle.innerText = "Calendario Partite";
-        const addBtn = document.querySelector('button[onclick="toggleMatchForm()"]');
+        // Sia giocatrici che staff possono creare partite nel calendario attivo
+        const addBtn = document.getElementById('btnAggiungiPartita');
         if (addBtn) addBtn.style.display = 'flex';
 
         secCalendario.classList.remove('hidden');
@@ -490,10 +609,17 @@ async function caricaStoricoInfortuniStaff() {
     const boxWrapper = document.getElementById('boxInfortuniInCorsoWrapper');
     const contentInCorso = document.getElementById('contentInfortuniInCorso');
     const countBadge = document.getElementById('countInfortuniInCorso');
+    const wrapperStaff = document.getElementById('wrapperListaStaffInfortuni');
+    const titoloTutte = document.getElementById('titoloTutteGiocatrici');
+    const sottotitolo = document.getElementById('sottotitoloStoricoInfortuni');
     const listaGiocatriciContainer = document.getElementById('listaGiocatriciStoricoStaff');
     const listaStoricoClassico = document.getElementById('listaStoricoInfortuni');
 
     if (listaStoricoClassico) listaStoricoClassico.innerHTML = '';
+    if (wrapperStaff) wrapperStaff.classList.remove('hidden');
+    if (titoloTutte) titoloTutte.style.display = 'block';
+    if (sottotitolo) sottotitolo.textContent = "Panoramica degli infortuni attivi e dello storico di tutte le giocatrici.";
+
     if (!boxWrapper || !listaGiocatriciContainer) return;
 
     listaGiocatriciContainer.innerHTML = '<p class="text-xs text-slate-400 text-center py-4">Caricamento dati infortuni...</p>';
@@ -513,8 +639,8 @@ async function caricaStoricoInfortuniStaff() {
         if (countBadge) countBadge.textContent = infortunateInCorso.length;
 
         contentInCorso.innerHTML = infortunateInCorso.map(g => {
-            const dInizio = g.data_inizio_infortunio;
-            const dFine = g.data_fine_infortunio ? `fino al ${g.data_fine_infortunio}` : 'in corso';
+            const dInizio = formattaDataBella(g.data_inizio_infortunio);
+            const dFine = g.data_fine_infortunio ? `fino al ${formattaDataBella(g.data_fine_infortunio)}` : 'in corso';
             return `
                 <div class="bg-white dark:bg-slate-900/80 p-3 rounded-xl border border-amber-200/80 dark:border-amber-900/50 flex justify-between items-center text-xs">
                     <div>
@@ -542,7 +668,7 @@ async function caricaStoricoInfortuniStaff() {
             htmlStoricoItem = storicoG.map(inf => {
                 return `
                     <div class="bg-slate-50 dark:bg-slate-900/60 p-2.5 rounded-xl border border-slate-100 dark:border-slate-700/60 flex justify-between items-center text-xs">
-                        <span class="text-slate-700 dark:text-slate-300">Dal <strong>${inf.data_inizio}</strong> al <strong>${inf.data_fine}</strong></span>
+                        <span class="text-slate-700 dark:text-slate-300">Dal <strong>${formattaDataBella(inf.data_inizio)}</strong> al <strong>${formattaDataBella(inf.data_fine)}</strong></span>
                         <span class="bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded font-medium">Concluso</span>
                     </div>
                 `;
@@ -555,7 +681,7 @@ async function caricaStoricoInfortuniStaff() {
         if (g.infortunata && g.data_inizio_infortunio) {
             htmlInfortunioAttivoCard = `
                 <div class="bg-amber-50 dark:bg-amber-950/40 p-2.5 rounded-xl border border-amber-200 dark:border-amber-900/50 text-xs flex justify-between items-center mb-2">
-                    <span class="font-semibold text-amber-800 dark:text-amber-300">Infortunio Attivo dal ${g.data_inizio_infortunio}</span>
+                    <span class="font-semibold text-amber-800 dark:text-amber-300">Infortunio Attivo dal ${formattaDataBella(g.data_inizio_infortunio)}</span>
                     <span class="bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200 px-2 py-0.5 rounded font-bold">In corso</span>
                 </div>
             `;
@@ -595,10 +721,17 @@ async function caricaStoricoInfortuniStaff() {
 async function caricaStoricoInfortuni() {
     const container = document.getElementById('listaStoricoInfortuni');
     const boxWrapper = document.getElementById('boxInfortuniInCorsoWrapper');
+    const wrapperStaff = document.getElementById('wrapperListaStaffInfortuni');
     const listaGiocatriciContainer = document.getElementById('listaGiocatriciStoricoStaff');
+    const titoloSezioneLista = document.getElementById('titoloTutteGiocatrici');
+    const sottotitolo = document.getElementById('sottotitoloStoricoInfortuni');
 
+    // Nascondiamo tutti i box riservati allo staff: l'atleta vede solo i propri infortuni
     if (boxWrapper) boxWrapper.classList.add('hidden');
+    if (wrapperStaff) wrapperStaff.classList.add('hidden');
     if (listaGiocatriciContainer) listaGiocatriciContainer.innerHTML = '';
+    if (titoloSezioneLista) titoloSezioneLista.style.display = 'none';
+    if (sottotitolo) sottotitolo.textContent = "Riepilogo dei tuoi infortuni attivi e passati.";
 
     if (!container || !currentUser || currentUser.isStaff) return;
 
@@ -620,11 +753,11 @@ async function caricaStoricoInfortuni() {
 
     let htmlAttivo = '';
     if (currentUser.infortunata && currentUser.data_inizio_infortunio) {
-        const dInizio = currentUser.data_inizio_infortunio;
-        const testoFine = currentUser.data_fine_infortunio ? `fino al ${currentUser.data_fine_infortunio}` : 'ad oggi';
+        const dInizio = formattaDataBella(currentUser.data_inizio_infortunio);
+        const testoFine = currentUser.data_fine_infortunio ? `fino al ${formattaDataBella(currentUser.data_fine_infortunio)}` : 'ad oggi';
 
         htmlAttivo = `
-            <div class="bg-amber-50 dark:bg-amber-950/30 p-4 rounded-2xl border border-amber-200 dark:border-amber-900/40 space-y-2">
+            <div class="bg-amber-50 dark:bg-amber-950/30 p-4 rounded-2xl border border-amber-200 dark:border-amber-900/40 space-y-2 mb-3">
                 <div class="flex justify-between items-center">
                     <span class="text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wide">Infortunio Attivo</span>
                     <span class="text-xs bg-amber-200 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300 px-2 py-0.5 rounded-md font-medium">In corso</span>
@@ -638,12 +771,12 @@ async function caricaStoricoInfortuni() {
     if (data && data.length > 0) {
         htmlStorico = data.map(inf => {
             return `
-                <div class="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 space-y-2">
+                <div class="bg-white dark:bg-slate-800 p-4 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 space-y-2 mb-2">
                     <div class="flex justify-between items-center">
                         <span class="text-xs font-semibold text-indigo-600 dark:text-indigo-400">Periodo di Stop</span>
                         <span class="text-xs bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-2.5 py-1 rounded-full font-medium">Concluso</span>
                     </div>
-                    <p class="text-sm font-medium text-slate-700 dark:text-slate-200">Dal <strong class="text-slate-900 dark:text-white">${inf.data_inizio}</strong> al <strong class="text-slate-900 dark:text-white">${inf.data_fine}</strong></p>
+                    <p class="text-sm font-medium text-slate-700 dark:text-slate-200">Dal <strong class="text-slate-900 dark:text-white">${formattaDataBella(inf.data_inizio)}</strong> al <strong class="text-slate-900 dark:text-white">${formattaDataBella(inf.data_fine)}</strong></p>
                 </div>
             `;
         }).join('');
@@ -671,7 +804,7 @@ window.showArchivedMatches = function () {
     const headerTitle = document.getElementById('sectionHeaderTitle');
     if (headerTitle) headerTitle.innerText = "Archivio Partite Passate";
 
-    const addBtn = document.querySelector('button[onclick="toggleMatchForm()"]');
+    const addBtn = document.getElementById('btnAggiungiPartita');
     if (addBtn) addBtn.style.display = 'none';
 
     renderFiltriArchivio();
@@ -803,7 +936,7 @@ window.eseguiLogin = async function () {
 
         currentUser = data[0];
         currentUser.isStaff = false;
-        currentUser.infortunata = !!currentUser.infortunata;
+        currentUser.infortunata = Boolean(currentUser.infortunata);
 
         localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUser));
 
@@ -819,6 +952,7 @@ window.logoutUser = function () {
     toggleSidebar(false);
     localStorage.removeItem(STORAGE_KEY);
     currentUser = null;
+    mostraSoloArchivio = false;
     aggiornaInterfaccia();
 };
 
@@ -844,23 +978,25 @@ function aggiornaInterfaccia() {
 
         if (sidebarName) sidebarName.textContent = `${currentUser.nome} ${currentUser.cognome}`;
         if (sidebarRoleYear) {
-            sidebarRoleYear.textContent = currentUser.isStaff
-                ? (currentUser.anno_nascita ? `${currentUser.ruolo || 'Ruolo'} • ${currentUser.anno_nascita}` : `${currentUser.ruolo || 'Ruolo'}`)
-                : (currentUser.anno_nascita ? `${currentUser.ruolo || 'Ruolo'} • ${currentUser.anno_nascita}` : `${currentUser.ruolo || 'Ruolo'}`);
+            sidebarRoleYear.textContent = currentUser.anno_nascita
+                ? `${currentUser.ruolo || 'Ruolo'} • ${currentUser.anno_nascita}`
+                : `${currentUser.ruolo || 'Ruolo'}`;
         }
         if (sidebarInitials) {
             const iniziali = `${currentUser.nome.charAt(0)}${currentUser.cognome.charAt(0)}`.toUpperCase();
             sidebarInitials.textContent = iniziali;
         }
 
-        const btnInfortuniMenu = document.querySelector('button[onclick="mostraSezione(\'infortuni\')"]');
-        if (btnInfortuniMenu) {
-            btnInfortuniMenu.style.display = 'flex';
-        }
-
+        // Dettaglio Presenze nel menu laterale rimane NASCOSTO a dirigenti e allenatori
         const btnMenuRiepilogo = document.getElementById('btnMenuRiepilogo');
         if (btnMenuRiepilogo) {
             btnMenuRiepilogo.style.display = currentUser.isStaff ? 'none' : 'flex';
+        }
+
+        // Sia giocatrici che staff possono creare partite (a meno che non siamo in archivio)
+        const addBtn = document.getElementById('btnAggiungiPartita');
+        if (addBtn && !mostraSoloArchivio) {
+            addBtn.style.display = 'flex';
         }
 
         const secInfortuni = document.getElementById('section-infortuni');
@@ -882,20 +1018,16 @@ function isGiocatriceInfortunataPerPartita(matchDateStr, giocatrice) {
         target = currentUser;
     }
 
-    if (!target || !target.infortunata || !target.data_inizio_infortunio) return false;
+    if (!target || !target.infortunata || !target.data_inizio_infortunio || !matchDateStr) return false;
 
-    const matchDate = new Date(matchDateStr);
-    const dataInizio = new Date(target.data_inizio_infortunio);
+    const matchISO = matchDateStr.slice(0, 10);
+    const inizioISO = normalizzaDataPerInput(target.data_inizio_infortunio);
 
-    matchDate.setHours(0, 0, 0, 0);
-    dataInizio.setHours(0, 0, 0, 0);
-
-    if (matchDate < dataInizio) return false;
+    if (matchISO < inizioISO) return false;
 
     if (target.data_fine_infortunio) {
-        const dataFine = new Date(target.data_fine_infortunio);
-        dataFine.setHours(23, 59, 59, 999);
-        if (matchDate > dataFine) return false;
+        const fineISO = normalizzaDataPerInput(target.data_fine_infortunio);
+        if (matchISO > fineISO) return false;
     }
 
     return true;
@@ -924,6 +1056,7 @@ window.editMatch = function (match) {
 };
 
 window.deleteMatch = async function (id) {
+    if (!currentUser || !currentUser.isStaff) return;
     if (confirm('Vuoi eliminare questa partita?')) {
         const { error } = await eseguiQueryConRetry(() => db.from('partite').delete().eq('id', id));
         if (!error) fetchMatches();
@@ -1066,7 +1199,7 @@ function creaCardElement(match, isArchivio = false, isInEvidenza = false) {
         : `openPresenceModal('${match.id}', '${match.avversario.replace(/'/g, "\\'")}')`;
 
     let mappaHtml = '';
-    // Mostra la mappa SOLO se la partita NON è nell'archivio
+    // Mostra la mappa sulla card SOLO se la partita NON è nell'archivio
     if (!isArchivio && match.indirizzo && match.indirizzo.trim() !== '') {
         const encodedAddress = encodeURIComponent(match.indirizzo);
         const googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodedAddress}`;
@@ -1086,6 +1219,7 @@ function creaCardElement(match, isArchivio = false, isInEvidenza = false) {
         `;
     }
 
+    // Le giocatrici possono modificare la partita, solo lo Staff può eliminarla
     card.innerHTML = `
         <div class="flex justify-between items-start">
             <div onclick="${clickAction}" class="cursor-pointer flex-1">
@@ -1159,7 +1293,6 @@ function popolaSelectRiepilogo() {
     }
 }
 
-// --- APERTURA DETTAGLIO DAL CALENDARIO O ARCHIVIO ---
 window.apriDettaglioStaff = function (matchId) {
     mostraSezione('riepilogo');
     const matchInfo = cachePartiteGlobali.find(m => m.id === matchId);
@@ -1201,7 +1334,6 @@ window.apriDettaglioStaff = function (matchId) {
     caricaDettaglioPartita(matchId, èPassata);
 };
 
-// --- CARICAMENTO DETTAGLIO PARTITA (CON CONTROLLO ARCHIVIO) ---
 window.caricaDettaglioPartita = async function (matchId, forzaArchivio = false) {
     const container = document.getElementById('dettaglioPartitaContainer');
     const titolo = document.getElementById('dettaglioTitoloMatch');
@@ -1316,14 +1448,14 @@ window.caricaDettaglioPartita = async function (matchId, forzaArchivio = false) 
             <div id="listaNonRispostoDettaglio" class="space-y-1.5 text-sm">
                 ${nonHannoRispostoList.length ? nonHannoRispostoList.map(g => `
                     <div class="flex justify-between items-center bg-slate-100 dark:bg-slate-700/50 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-600">
-                        <span class="font-semibold text-slate-700 dark:text-slate-200">${g.nome}${g.cognome}</span>
+                        <span class="font-semibold text-slate-700 dark:text-slate-200">${g.nome.trim()}${g.cognome.trim()}</span>
                         <span class="text-xs bg-slate-200 dark:bg-slate-600 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-md font-medium">${g.ruolo}</span>
                     </div>
                 `).join('') : '<p class="text-xs text-slate-400 italic">Tutte le giocatrici hanno risposto!</p>'}
             </div>
             <div id="containerBottoneSollecita">
                 ${nonHannoRispostoList.length > 0 ? `
-                    <a href="https://api.whatsapp.com/send?text=${encodeURIComponent(`Ciao ragazze! Vi ricordo di inserire la vostra disponibilità per la partita vs ${matchInfo.avversario}.\n\nMancano le risposte di:\n${nonHannoRispostoList.map(g => `- ${g.nome}${g.cognome}`).join('\n')}\n\nGrazie! 🏐`)}" target="_blank"
+                    <a href="https://api.whatsapp.com/send?text=${encodeURIComponent(`Ciao ragazze! Vi ricordo di inserire la vostra disponibilità per la partita vs ${matchInfo.avversario}.\n\nMancano le risposte di:\n${nonHannoRispostoList.map(g => `- ${g.nome.trim()}${g.cognome.trim()}`).join('\n')}\n\nGrazie! 🏐`)}" target="_blank"
                        class="w-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-3 px-4 rounded-xl flex items-center justify-center space-x-2 transition shadow-sm cursor-pointer mt-3">
                         <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/></svg>
                         <span>Sollecita risposta</span>
@@ -1416,59 +1548,5 @@ window.updatePresence = async function (presente) {
         }
     } finally {
         salvataggioPresenzaInCorso = false;
-    }
-};
-
-window.closeProfileStaffModal = function () {
-    const modal = document.getElementById('profileStaffModal');
-    if (modal) modal.classList.add('hidden');
-};
-
-window.salvaProfiloStaff = async function () {
-    if (!currentUser || !currentUser.isStaff || salvataggioProfiloInCorso) return;
-
-    const nuovoRuolo = document.getElementById('editStaffRuolo').value;
-    const nuovoAnno = document.getElementById('editStaffAnno').value.trim();
-
-    salvataggioProfiloInCorso = true;
-    const btnSalva = document.getElementById('btnSalvaProfiloStaff');
-    if (btnSalva) {
-        btnSalva.disabled = true;
-        btnSalva.textContent = 'Salvataggio...';
-    }
-
-    try {
-        const dataAggiornati = {
-            ruolo_staff: nuovoRuolo,
-            anno_nascita: nuovoAnno !== "" ? nuovoAnno : null
-        };
-
-        const { data, error } = await eseguiQueryConRetry(() =>
-            db.from('staff').update(dataAggiornati).eq('id', currentUser.id).select()
-        );
-
-        if (error) {
-            console.error("Errore salvataggio staff Supabase:", error);
-            alert('Connessione instabile o errore nel salvataggio. Riprova.');
-        } else {
-            if (data && data.length > 0) {
-                currentUser.ruolo = data[0].ruolo_staff;
-                currentUser.anno_nascita = data[0].anno_nascita;
-            } else {
-                currentUser.ruolo = nuovoRuolo;
-                currentUser.anno_nascita = dataAggiornati.anno_nascita;
-            }
-
-            currentUser.isStaff = true;
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUser));
-            closeProfileStaffModal();
-            aggiornaInterfaccia();
-        }
-    } finally {
-        salvataggioProfiloInCorso = false;
-        if (btnSalva) {
-            btnSalva.disabled = false;
-            btnSalva.textContent = 'Salva Modifiche';
-        }
     }
 };

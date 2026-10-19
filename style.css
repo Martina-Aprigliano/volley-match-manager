@@ -1,0 +1,64 @@
+/* ==========================================================================
+   FIX NATIVO PER CAMPI DATA E ORA SU MOBILE (iOS Safari / Chrome Android)
+   Impedisce ai campi data di sbordare o toccare i bordi del contenitore
+   ========================================================================== */
+
+input[type="date"],
+input[type="datetime-local"] {
+    -webkit-appearance: none;
+    appearance: none;
+    box-sizing: border-box !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    height: 46px;
+    padding: 0.625rem 0.875rem;
+    text-align: left !important;
+    line-height: 1.25rem;
+    display: block;
+    margin: 0 !important;
+}
+
+/* Allinea sempre a sinistra il valore della data su iPhone/iPad */
+input[type="date"]::-webkit-date-and-time-value,
+input[type="datetime-local"]::-webkit-date-and-time-value {
+    text-align: left !important;
+    margin: 0;
+}
+
+/* Rende l'icona del calendario ben cliccabile e ordinata */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.65;
+    padding: 4px;
+    margin-right: -4px;
+    transition: opacity 0.2s ease;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+}
+
+/* Adatta il colore dell'icona calendario nativa quando è attivo il tema scuro */
+.dark input[type="date"]::-webkit-calendar-picker-indicator,
+.dark input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+}
+
+/* ==========================================================================
+   SPAZIATURA SICURA BOX INFORTUNIO E PULSANTI
+   ========================================================================== */
+
+.injury-box-container {
+    box-sizing: border-box;
+    width: 100%;
+}
+
+/* Evita il flash di selezione blu su mobile quando si toccano i bottoni */
+button,
+a,
+label {
+    -webkit-tap-highlight-color: transparent;
+}
